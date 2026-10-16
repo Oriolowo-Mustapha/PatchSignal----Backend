@@ -13,6 +13,8 @@ export type StoredInvestigation = {
   steps?: string;
   environment?: string;
   errorText?: string;
+  analysisJob?: {id:string;status:string;error:string|null;updatedAt:Date|string};
+  modelId?: string;
   commitSha?: string;
   controlSha?: string;
   stage: string;

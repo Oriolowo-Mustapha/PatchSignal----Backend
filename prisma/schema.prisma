@@ -74,6 +74,7 @@ model Investigation {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  analysisJob AnalysisJob?
   evidence    EvidenceItem[]
   questions   Question[]
   hypotheses  Hypothesis[]
@@ -161,4 +162,18 @@ model Attachment {
   height          Int?
   geminiFileUri   String?
   createdAt       DateTime @default(now())
+}
+
+model AnalysisJob {
+  id              String @id @default(cuid())
+  investigationId String @unique
+  investigation   Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  status          String @default("queued")
+  attempts        Int @default(0)
+  leaseToken      String?
+  leaseExpiresAt  DateTime?
+  error           String? @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@index([status, createdAt])
 }

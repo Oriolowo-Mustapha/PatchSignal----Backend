@@ -11,7 +11,7 @@ Copy `.env.example` to `.env.local` and fill:
 - Prod (Render): same keys + Render PG `DATABASE_URL`. No code change.
 
 Without `DATABASE_URL` the API runs on an in-memory store (for testing intake before DB is wired).
-Without `GEMINI_API_KEY`, `/analyze` returns a labelled cached demo result.
+Without `GEMINI_API_KEY`, `/analyze` queues labelled cached demo extraction; poll GET investigation until analysisJob completes.
 
 ## 2. Install + verify
 ```powershell
@@ -57,3 +57,5 @@ Build demo images later (provided after building): `docker build -t demo-signup:
 npx prisma migrate dev   # local PG
 # Render build command: prisma migrate deploy && next build
 ```
+
+Async analysis verification is in `ASYNC_ANALYSIS_VERIFICATION.md`. The request now returns 202 before model work; poll job status before running inspect.

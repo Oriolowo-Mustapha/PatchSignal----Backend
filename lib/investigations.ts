@@ -5,7 +5,7 @@ export async function getInvestigation(id: string) {
   if (useMemoryStore()) return memoryStore.get(id);
   const inv = await prisma.investigation.findUnique({
     where: { id },
-    include: { evidence: true, questions: true, hypotheses: { include: { tests: true, runs: true } }, attachments: true, classifications: true },
+    include: { analysisJob: { select: {id:true,status:true,error:true,updatedAt:true} }, evidence: true, questions: true, hypotheses: { include: { tests: true, runs: true } }, attachments: true, classifications: true },
   });
   return inv;
 }

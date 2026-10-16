@@ -1,3 +1,4 @@
+import { withDeadline } from "@/lib/analysis/deadline";
 import { config } from "@/lib/config";
 import { recordEvidenceSchema, type RecordEvidence } from "@/lib/evidence/schema";
 
@@ -97,14 +98,15 @@ export async function extractViaGroq(input: {
 
   let hint: string | undefined;
   let lastError = "no attempts made";
-  for (const waitMs of [0, 4000, 10000]) {
+  for (const waitMs of [0, 1000]) {
     if (waitMs) await sleep(waitMs);
     try {
       const content: AnyMsg[] = [
         ...input.imageUrls.slice(0, 3).map((url) => ({ type: "image_url", image_url: { url } })),
         { type: "text", text: hint ? `Correction to your previous call: ${hint}\n\n${dataText}` : dataText },
       ];
-      const res = await fetch(GROQ_URL, {
+      const res = await withDeadline(async signal => {
+        const response = await fetch(GROQ_URL, {
         method: "POST",
         headers: { Authorization: `Bearer ${config.groqApiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -119,14 +121,16 @@ export async function extractViaGroq(input: {
           top_p: 0.95,
           max_completion_tokens: 4096,
         }),
-        signal: AbortSignal.timeout(90000),
-      });
+        signal,
+        });
+        return {ok:response.ok,status:response.status,text:await response.text()};
+      },25_000);
       if (!res.ok) {
-        lastError = `${model}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`;
+        lastError = `${model}: HTTP ${res.status} ${res.text.slice(0, 300)}`;
         hint = undefined;
         continue;
       }
-      const body = (await res.json()) as AnyMsg;
+      const body = JSON.parse(res.text) as AnyMsg;
       const msg = body?.choices?.[0]?.message;
       const call = msg?.tool_calls?.[0]?.function;
       let args: unknown = null;
@@ -163,5 +167,5 @@ export async function extractViaGroq(input: {
       hint = undefined;
     }
   }
-  throw new Error(`Groq extraction failed after 3 attempts (${model}). Last: ${lastError}`);
+  throw new Error(`Groq extraction failed after 2 attempts (${model}). Last: ${lastError}`);
 }
