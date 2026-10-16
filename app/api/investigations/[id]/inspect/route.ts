@@ -15,6 +15,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!inv || !owns(inv, auth.userId)) return NextResponse.json({ error: "not found" }, { status: 404 });
   try {
     const inspection = await inspectRepo(inv.owner, inv.repo);
+    // Unsupported ecosystem ends the pipeline here with an official
+    // backend verdict (CLS-4): setup/tooling failure is Inconclusive,
+    // never Not reproduced. The frontend must read status/classification.
+    if (inspection.ecosystem !== "node-vitest") {
+      const justification =
+        `Repository ecosystem "${inspection.ecosystem}" is not supported by the v0.1 runner ` +
+        `(node-vitest only). No reproduction attempted; this does not imply the bug is absent.`;
+      if (useMemoryStore()) {
+        memoryStore.update(id, {
+          inspection, commitSha: inspection.sha,
+          controlSha: process.env.CONTROL_SHA || undefined, stage: "inspected",
+          status: "Inconclusive",
+          classification: { status: "Inconclusive", rule: "CLS-4", justification },
+        });
+      } else {
+        await prisma.investigation.update({
+          where: { id },
+          data: { commitSha: inspection.sha, controlSha: process.env.CONTROL_SHA || null, stage: "inspected", status: "Inconclusive" },
+        });
+        await prisma.classification.create({
+          data: { investigationId: id, status: "Inconclusive", rule: "CLS-4", justification },
+        });
+      }
+      return NextResponse.json({ ...inspection, status: "Inconclusive", rule: "CLS-4", justification });
+    }
     if (useMemoryStore()) {
       memoryStore.update(id, {
         inspection, commitSha: inspection.sha,

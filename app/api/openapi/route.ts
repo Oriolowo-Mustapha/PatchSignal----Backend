@@ -163,7 +163,7 @@ export async function GET() {
       "/api/investigations/{id}/inspect": {
         post: {
           tags: ["investigations"],
-          summary: "Stage 3: pin commit SHA + read tree via GitHub API",
+          summary: "Stage 3: pin commit SHA + read tree via GitHub API (auto-Inconclusive CLS-4 when unsupported)",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: { "200": { description: "{ defaultBranch, sha, ecosystem }" } },
         },
