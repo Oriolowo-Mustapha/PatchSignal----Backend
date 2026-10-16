@@ -86,3 +86,13 @@ Google DeepMind (Gemma 4, gemma.ai docs), Adaption AI, DigitalOcean/Render hosti
 ## License
 
 Apache-2.0 — see `LICENSE`.
+
+## Background analysis deployment
+
+`POST /api/investigations/:id/analyze` now returns 202 with a persisted job. Poll the investigation `analysisJob.status` until `completed` or `failed`; only completion advances `stage` to `analyzed`. Existing evidence provenance and deterministic classification rules are unchanged.
+
+Deploy using `npm run build` and **`npm start`**. Start now runs `prisma migrate deploy` before Next boots, adding the additive AnalysisJob table. The startup instrumentation starts a single worker per long-lived Node process, with Postgres leases preventing concurrent execution of the same job across instances. Queued and expired jobs resume after restart; memory fallback is development-only and loses data on process exit. No extra worker service, Redis or credentials are introduced. A service stopped/asleep cannot process work until it wakes.
+
+Each model request has a 25-second abort/deadline, with at most two attempts and a one-second fallback delay. An expired job lease can be recovered up to three times; explicit user retry is required after terminal failure. Evidence/questions/job completion commit in one transaction and stale lease holders cannot overwrite a later worker result. API job views omit lease tokens and provider exceptions.
+
+Deploy backend first, then frontend support for analysisJob states. Existing frontends still receive normal detail/evidence shapes but should disable duplicate Analyze clicks while a job is queued/running. Serverless backends cannot rely on this timer worker; run this on the supplied Render Node service.

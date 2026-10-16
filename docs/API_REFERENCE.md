@@ -17,7 +17,7 @@ Backend for evidence-backed bug investigation. The frontend drives a 7-stage flo
 
 1. `POST /api/auth/signup` (once) → save `token`
 2. `POST /api/investigations` (multipart: repoUrl, description, screenshots) → save `id`
-3. `POST /api/investigations/:id/analyze` → evidence with provenance tags (can take 10–30s, Gemma retries)
+3. `POST /api/investigations/:id/analyze` → 202 job; poll GET until analysisJob.status is completed before inspection
 4. `POST /api/investigations/:id/inspect` → pinned commit SHA, file tree, ecosystem
 5. `POST /api/investigations/:id/hypotheses` → hypothesis + candidate Vitest
 6. `POST /api/investigations/:id/runs` → execution result + deterministic status
@@ -129,22 +129,22 @@ Returns the investigation with nested `evidence[]`, `questions[]`, `hypotheses[]
 
 ### POST /api/investigations/:id/analyze — Stage 2 extraction (Bearer)
 
-Sends description + screenshots to Gemma 4 (`gemma-4-31b-it`, fallback `gemma-4-26b-a4b-it`), validates against the evidence schema with retries. Allow 10–30s (server retries 31B ×3 then 26B ×2 over demand spikes). Without a server key it returns a labelled cached demo (`"cached": true`).
+Persists a background analysis job and responds immediately. It does not hold the HTTP connection open during model generation.
 
-```
-// 200
-{ "summary": "Sign-up rejects plus-addressed emails",
-  "expected": { "text": "...", "provenance": "reported", "source": "field:expected" },
-  "actual":   { "text": "...", "provenance": "observed", "source": "image:1" },
-  "evidence": [ { "text": "...", "provenance": "observed|reported|hypothesis|unknown", "source": "image:1|field:X|description|model|run:Y" } ],
-  "unknowns": [ { "item": "Browser and version", "question": "Which browser...?", "blocking": false } ],
-  "candidateAreas": [ { "path": "src/validation/email.ts", "provenance": "hypothesis" } ],
-  "modelId": "gemma-4-31b-it" }
+```json
+{
+  "id": "inv_example",
+  "analysisJob": {"id":"job_example","status":"queued","error":null,"updatedAt":"2026-10-16T19:00:00Z"}
+}
 ```
 
-Provenance rules for UI grouping: `observed` = visible in image/run output; `reported` = user-supplied, unverified; `hypothesis` = needs testing (never show a root cause as observed); `unknown` → render as reporter questions. `blocking: true` unknowns gate the "ready to file" warning.
+Response: **202 Accepted**, `Retry-After: 5`, `Cache-Control: no-store`. Poll authenticated `GET /api/investigations/:id` every five seconds. Its `analysisJob` contains `id`, `status` (`queued`, `running`, `completed`, `failed`), safe `error` and `updatedAt`. Lease tokens and internal attempt state are not public. Successful completion saves evidence/questions, sets `stage: analyzed` and completes the job atomically. Failure leaves the investigation without a verdict and exposes a retryable job error. Missing model configuration still produces explicitly labelled cached evidence (`modelId: cached-demo`). The worker preserves configured provider selection and passes up to three HTTPS screenshot URLs to URL-capable providers (Groq); the Gemini path still receives no image parts.
 
-Errors: `502 {"error":"Gemma extraction failed after 5 attempts ... Spikes are usually temporary — retry in a minute."}` → show Retry.
+Repeated POSTs while queued/running return the same job; an explicit POST after failure requeues it. Already analyzed investigations return 200 without rerunning analysis. A database/migration error returns 503 before acceptance. Model failure is recorded on the job, not delivered later through the original POST response.
+
+The model budget is one primary attempt and one fallback, each bounded to 25 seconds including cancellation, with a one-second delay between them. A hung SDK call is rejected even if it ignores cancellation. Queue waiting time depends on backlog. Postgres leases recover interrupted work on server startup and stop after three interruptions. This worker requires a long-lived Node process (Render web service); ephemeral serverless backend hosting needs a separate durable worker.
+
+Provenance rules remain unchanged: observed facts require image/run evidence, reporter claims stay unverified, hypotheses need testing and blocking unknowns gate filing. GET investigation retains its documented Prisma/memory evidence shape.
 
 ### POST /api/investigations/:id/inspect — Stage 3 repo pin (Bearer)
 

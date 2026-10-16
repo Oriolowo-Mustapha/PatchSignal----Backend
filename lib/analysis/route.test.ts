@@ -1,0 +1,15 @@
+import {NextResponse} from "next/server";
+import {beforeEach,it,expect,vi} from "vitest";
+const mocks=vi.hoisted(()=>({auth:vi.fn(),get:vi.fn(),enqueue:vi.fn(),start:vi.fn()}));
+vi.mock("@/lib/auth",()=>({authUser:mocks.auth,owns:(inv:{userId:string},user:string)=>inv?.userId===user}));
+vi.mock("@/lib/investigations",()=>({getInvestigation:mocks.get}));
+vi.mock("@/lib/analysis/jobs",()=>({enqueue:mocks.enqueue}));
+vi.mock("@/lib/analysis/worker",()=>({startAnalysisWorker:mocks.start}));
+import {POST} from "@/app/api/investigations/[id]/analyze/route";
+const params={params:Promise.resolve({id:"inv"})};
+beforeEach(()=>{vi.clearAllMocks();mocks.auth.mockResolvedValue({userId:"u"});mocks.get.mockResolvedValue({id:"inv",userId:"u",stage:"intake"});mocks.enqueue.mockResolvedValue({id:"job",status:"queued",error:null,updatedAt:new Date()});});
+it("returns 202 and a persisted job without awaiting model work",async()=>{const response=await POST(new Request("http://test/analyze",{method:"POST"}),params);expect(response.status).toBe(202);expect((await response.json()).analysisJob.status).toBe("queued");expect(response.headers.get("cache-control")).toBe("no-store");expect(mocks.start).toHaveBeenCalledTimes(1);});
+it("does not enqueue unauthorized requests",async()=>{mocks.auth.mockResolvedValue(NextResponse.json({error:"unauthorized"},{status:401}));expect((await POST(new Request("http://test"),params)).status).toBe(401);expect(mocks.enqueue).not.toHaveBeenCalled();});
+it("does not expose another user's investigation",async()=>{mocks.get.mockResolvedValue({userId:"other",stage:"intake"});expect((await POST(new Request("http://test"),params)).status).toBe(404);expect(mocks.enqueue).not.toHaveBeenCalled();});
+it("returns 503 when a job cannot be persisted",async()=>{mocks.enqueue.mockRejectedValue(new Error("private database exception"));const response=await POST(new Request("http://test"),params);expect(response.status).toBe(503);expect(JSON.stringify(await response.json())).not.toContain("private database exception");expect(mocks.start).not.toHaveBeenCalled();});
+it("does not reanalyze an investigation that already advanced",async()=>{mocks.get.mockResolvedValue({userId:"u",stage:"inspected"});expect((await POST(new Request("http://test"),params)).status).toBe(200);expect(mocks.enqueue).not.toHaveBeenCalled();});

@@ -1,0 +1,6 @@
+import {afterEach,it,expect,vi} from "vitest";
+vi.mock("@/lib/config",()=>({config:{groqApiKey:"test-only",groqModel:"test-model"}}));
+import {extractViaGroq} from "./client";
+afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();});
+it("bounds a hung Groq request to two aborted attempts",async()=>{vi.useFakeTimers();const signals:AbortSignal[]=[];const fetch=vi.fn((_url,options)=>{signals.push(options.signal);return new Promise(()=>{});});vi.stubGlobal("fetch",fetch);const request=extractViaGroq({description:"Report",fields:{},imageUrls:[]});const failure=expect(request).rejects.toThrow("failed after 2 attempts");await vi.advanceTimersByTimeAsync(51_000);await failure;expect(fetch).toHaveBeenCalledTimes(2);expect(signals.every(s=>s.aborted)).toBe(true);});
+it("also bounds a stalled response body after headers arrive",async()=>{vi.useFakeTimers();const fetch=vi.fn().mockResolvedValue({ok:true,status:200,text:()=>new Promise(()=>{})});vi.stubGlobal("fetch",fetch);const request=extractViaGroq({description:"Report",fields:{},imageUrls:[]});const failure=expect(request).rejects.toThrow("failed after 2 attempts");await vi.advanceTimersByTimeAsync(51_000);await failure;expect(fetch).toHaveBeenCalledTimes(2);});
