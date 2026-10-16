@@ -38,7 +38,9 @@ curl http://localhost:3000/api/health
 # intake (allowlisted repo only)
 curl -X POST http://localhost:3000/api/investigations -F repoUrl=https://github.com/patchsignal/demo-signup -F description="plus-sign emails fail"
 # -> { id }
+# analyze returns 202 + analysisJob (background worker); poll GET until analysisJob.status is completed/failed
 curl -X POST http://localhost:3000/api/investigations/ID/analyze
+curl http://localhost:3000/api/investigations/ID   # watch stage + analysisJob
 curl -X POST http://localhost:3000/api/investigations/ID/inspect   # needs GITHUB_TOKEN
 curl -X POST http://localhost:3000/api/investigations/ID/hypotheses -H "content-type: application/json" -d "{}"
 # runs without Docker: inject results honestly
