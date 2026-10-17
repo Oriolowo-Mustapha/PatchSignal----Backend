@@ -10,3 +10,6 @@ runnersmoke.log
 .agoya/
 # Generated deliverables (rebuild via tools/md_to_docx.py)
 PatchSignal-API-Reference.docx
+# Office lock/temp files
+~$*
+.~lock*

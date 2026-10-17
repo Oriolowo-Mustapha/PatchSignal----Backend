@@ -85,7 +85,9 @@ Pre-demo: wake Render (hit `/api/health` twice), backend `npm start` uses migrat
 | 6 | 5:00 | `package` → markdown + Open-on-GitHub (don't file); then the honest twin: unsupported repo → **Inconclusive CLS-4** | Human-only filing; "failed setup ≠ absent bug" |
 | 7 | 5:45 | Close: metrics (25 tests/8 suites), deterministic rules, what's next (Adaption flywheel, more ecosystems) | — |
 
-Branches: Gemini 503 spike → flip `MODEL_PROVIDER=groq` (same schema, recorded `modelId`); runner busy → 429, one-job v0.1; Render asleep → 60s wake warning; no Docker → honest-inject path, labelled `"injected": true`, never presented as a real run.
+Primary provider is **Gemini/Gemma** (`MODEL_PROVIDER=gemini`, the prize path); Groq is the emergency fallback only.
+
+Branches: Gemini 503/timeout spike → flip `MODEL_PROVIDER=groq` in Render env (same schema, same validation, `modelId` recorded either way); runner busy → 429, one-job v0.1; Render asleep → 60s wake warning; no Docker → honest-inject path, labelled `"injected": true`, never presented as a real run.
 
 ## 7. Metrics (verify before stage: `npm test`, `npm run typecheck`, production `next build`)
 
