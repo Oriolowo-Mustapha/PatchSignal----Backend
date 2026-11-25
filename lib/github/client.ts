@@ -40,6 +40,26 @@ export async function inspectRepo(owner: string, repo: string) {
   return { defaultBranch: branch, sha, fileCount: paths.length, paths: paths.slice(0, 500), manifest, pkg, ecosystem };
 }
 
+export async function fetchRepoFile(
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string,
+  maxBytes = 16_000
+): Promise<string | null> {
+  try {
+    const octokit = github();
+    const { data } = await octokit.rest.repos.getContent({ owner, repo, path, ref });
+    if (Array.isArray(data) || data.type !== "file" || !data.content) return null;
+    const buf = Buffer.from(data.content, "base64");
+    if (buf.includes(0)) return null;
+    const text = buf.toString("utf8");
+    return text.length > maxBytes ? text.slice(0, maxBytes) : text;
+  } catch {
+    return null;
+  }
+}
+
 export async function searchSimilarIssues(owner: string, repo: string, query: string) {
   const octokit = github();
   const { data } = await octokit.rest.search.issuesAndPullRequests({

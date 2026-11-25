@@ -37,6 +37,34 @@ export function buildTestPath(invId: string): string {
   return `tests/patchsignal/repro-${invId.slice(0, 8)}.test.ts`;
 }
 
-export function vitestTemplate(fn: string, hypothesis: string): string {
-  return `import { describe, expect, it } from "vitest";\n// Hypothesis: ${hypothesis}\n// Target function under test: ${fn}\n\ndescribe("patchsignal repro", () => {\n  it("asserts correct behaviour (fails on bug, passes when fixed)", async () => {\n    const mod = await import("../../src/validation/email").catch(() => null);\n    expect(mod, "target module missing — mark Inconclusive, do not fake pass").toBeTruthy();\n  });\n});\n`;
+export function vitestTemplate(targetModule: string | null, hypothesis: string): string {
+  const safeComment = hypothesis.replace(/[\r\n]+/g, " ").trim();
+  if (!targetModule) {
+    return [
+      `import { describe, it } from "vitest";`,
+      `// Hypothesis: ${safeComment}`,
+      ``,
+      `describe("patchsignal repro", () => {`,
+      `  it("asserts correct behaviour (fails on bug, passes when fixed)", () => {`,
+      `    throw new Error("target module missing — mark Inconclusive, do not fake pass");`,
+      `  });`,
+      `});`,
+      ``,
+    ].join("\n");
+  }
+  const normalized = targetModule.replace(/^\.\//, "").replace(/\.(ts|tsx|js|jsx|mjs|cjs)$/, "");
+  const importPath = normalized.startsWith("../") ? normalized : `../../${normalized}`;
+  return [
+    `import { describe, expect, it } from "vitest";`,
+    `import * as targetModule from "${importPath}";`,
+    `// Hypothesis: ${safeComment}`,
+    `// Target module under test: ${targetModule}`,
+    ``,
+    `describe("patchsignal repro", () => {`,
+    `  it("asserts correct behaviour (fails on bug, passes when fixed)", () => {`,
+    `    expect(targetModule, "target module missing — mark Inconclusive, do not fake pass").toBeTruthy();`,
+    `  });`,
+    `});`,
+    ``,
+  ].join("\n");
 }

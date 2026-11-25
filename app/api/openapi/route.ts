@@ -15,19 +15,20 @@ export async function GET() {
     components: {
       securitySchemes: {
         bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
+        cookieAuth: { type: "apiKey", in: "cookie", name: "ps_session" },
       },
     },
-    security: [{ bearerAuth: [] }],
+    security: [{ bearerAuth: [] }, { cookieAuth: [] }],
     tags: [
-      { name: "auth", description: "Signup, login, current user (public except /me)" },
-      { name: "investigations", description: "Stages 1–7 of one bug investigation (Bearer required)" },
+      { name: "auth", description: "Signup, login, session logout, current user (public except /me)" },
+      { name: "investigations", description: "Stages 1–7 of one bug investigation (Bearer JWT or HttpOnly ps_session cookie required)" },
     ],
     paths: {
       "/api/auth/signup": {
         post: {
           tags: ["auth"],
           security: [],
-          summary: "Signup (public)",
+          summary: "Signup (public, sets HttpOnly ps_session cookie + returns JWT)",
           requestBody: {
             required: true,
             content: {
@@ -45,9 +46,10 @@ export async function GET() {
             },
           },
           responses: {
-            "201": { description: "created user + token" },
-            "400": { description: "bad email / short password" },
+            "201": { description: "created user + Set-Cookie (ps_session) + token" },
+            "400": { description: "bad email / invalid password length" },
             "409": { description: "email already registered" },
+            "429": { description: "rate limit exceeded" },
           },
         },
       },
@@ -55,7 +57,7 @@ export async function GET() {
         post: {
           tags: ["auth"],
           security: [],
-          summary: "Login (public)",
+          summary: "Login (public, sets HttpOnly ps_session cookie + returns JWT)",
           requestBody: {
             required: true,
             content: {
@@ -72,9 +74,18 @@ export async function GET() {
             },
           },
           responses: {
-            "200": { description: "user + token (paste token into Authorize 🔒)" },
+            "200": { description: "user + Set-Cookie (ps_session) + token" },
             "401": { description: "invalid credentials" },
+            "429": { description: "rate limit exceeded" },
           },
+        },
+      },
+      "/api/auth/logout": {
+        post: {
+          tags: ["auth"],
+          security: [],
+          summary: "Revoke current session and clear ps_session cookie",
+          responses: { "200": { description: "{ ok: true }" } },
         },
       },
       "/api/auth/me": {
@@ -101,6 +112,14 @@ export async function GET() {
         },
       },
       "/api/investigations": {
+        get: {
+          tags: ["investigations"],
+          summary: "List authenticated user's investigations (newest first, max 50)",
+          responses: {
+            "200": { description: "{ investigations: [...] }" },
+            "401": { description: "missing/invalid token" },
+          },
+        },
         post: {
           tags: ["investigations"],
           summary: "Stage 1: intake (multipart)",
@@ -171,7 +190,7 @@ export async function GET() {
       "/api/investigations/{id}/hypotheses": {
         post: {
           tags: ["investigations"],
-          summary: "Stage 4: hypothesis + candidate Vitest",
+          summary: "Stage 4: dynamic repo-aware hypothesis + candidate Vitest (HYP-4 validated)",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           requestBody: {
             content: {
@@ -183,12 +202,18 @@ export async function GET() {
                     triggerConditions: { type: "string" },
                     expectedFailure: { type: "string" },
                     evidenceNeeded: { type: "string" },
+                    targetFile: { type: "string" },
+                    content: { type: "string" },
                   },
                 },
               },
             },
           },
-          responses: { "201": { description: "hypothesis + test path/content" } },
+          responses: {
+            "201": { description: "hypothesis + test path/content + modelId" },
+            "400": { description: "unsupported ecosystem or HYP-4 invalid test imports" },
+            "502": { description: "model upstream failed" },
+          },
         },
       },
       "/api/investigations/{id}/runs": {
@@ -227,17 +252,20 @@ export async function GET() {
       "/api/investigations/{id}/package": {
         get: {
           tags: ["investigations"],
-          summary: "Stage 7: markdown + prefilled GitHub issue URL",
+          summary: "Stage 7: markdown + prefilled GitHub issue URL + readiness metadata",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-          responses: { "200": { description: "{ markdown, issueUrl, copyToClipboard }" } },
+          responses: { "200": { description: "{ markdown, issueUrl, copyToClipboard, readyToFile, blockingUnknowns }" } },
         },
       },
       "/api/files/{attachmentId}": {
         get: {
           tags: ["investigations"],
-          summary: "Attachment lookup (secureUrl lives on Cloudinary CDN)",
+          summary: "Ownership-scoped attachment lookup (id or publicId -> CDN metadata)",
           parameters: [{ name: "attachmentId", in: "path", required: true, schema: { type: "string" } }],
-          responses: { "200": { description: "{ attachmentId, note }" } },
+          responses: {
+            "200": { description: "{ id, publicId, secureUrl, mime, sizeBytes, width, height, investigationId }" },
+            "404": { description: "not found or owned by another user" },
+          },
         },
       },
     },

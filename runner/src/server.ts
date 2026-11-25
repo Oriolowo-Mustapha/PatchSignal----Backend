@@ -7,9 +7,9 @@
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, normalize, sep } from "node:path";
+import { join, normalize } from "node:path";
 
 const TOKEN = process.env.RUNNER_TOKEN ?? "";
 const PORT = Number(process.env.RUNNER_PORT ?? 5001);
@@ -56,8 +56,32 @@ async function imageDigest(image: string): Promise<string> {
 function safeTestPath(p: string): string | null {
   const n = normalize(p).replace(/\\/g, "/");
   if (n.includes("..")) return null;
-  if (!n.startsWith("tests/patchsignal/") || !n.endsWith(".test.ts")) return null;
+  if (!/^tests\/patchsignal\/[a-zA-Z0-9._-]+\.test\.ts$/.test(n)) return null;
   return n;
+}
+
+function extractVitestJson(stdout: string): string {
+  const lastEnd = stdout.lastIndexOf("}");
+  if (lastEnd === -1) return "";
+  let idx = stdout.indexOf("{");
+  let checks = 0;
+  while (idx !== -1 && idx < lastEnd && checks < 25) {
+    checks++;
+    const slice = stdout.slice(idx, lastEnd + 1);
+    if (slice.includes('"testResults"') || slice.includes('"numTotalTests"')) {
+      try {
+        const parsed = JSON.parse(slice) as Record<string, unknown>;
+        if (parsed && typeof parsed === "object" && ("testResults" in parsed || "numTotalTests" in parsed)) {
+          const serialized = JSON.stringify(parsed);
+          return serialized.length > 32_000 ? serialized.slice(0, 32_000) : serialized;
+        }
+      } catch {
+        // try next opening brace
+      }
+    }
+    idx = stdout.indexOf("{", idx + 1);
+  }
+  return "";
 }
 
 const server = createServer(async (req, res) => {
@@ -148,7 +172,7 @@ const server = createServer(async (req, res) => {
         exitCode: code,
         durationMs,
         outcome,
-        reportJson: "",
+        reportJson: extractVitestJson(stdout),
         stdout: trunc(stdout),
         stderr: trunc(stderr),
         imageDigest: await imageDigest(spec.image),

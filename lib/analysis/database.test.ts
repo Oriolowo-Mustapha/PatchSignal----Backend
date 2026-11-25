@@ -21,3 +21,20 @@ it("requeues only a failed database job and does not reset an active lease",asyn
  db.analysisJob.upsert.mockResolvedValue({id:"j",status:"failed"});db.analysisJob.findUniqueOrThrow.mockResolvedValue({id:"j",status:"running"});await enqueue("i");expect(db.analysisJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({where:{id:"j",status:"failed"}}));
  db.analysisJob.updateMany.mockClear();db.analysisJob.upsert.mockResolvedValue({id:"j",status:"running"});await enqueue("i");expect(db.analysisJob.updateMany).not.toHaveBeenCalled();
 });
+it("persists summary, candidateAreas, evidence, questions, and stage atomically when lease holds",async()=>{
+ const parsed=recordEvidenceSchema.parse(cachedDemoEvidence());
+ const tx={
+  analysisJob:{updateMany:vi.fn().mockResolvedValue({count:1})},
+  investigation:{findUnique:vi.fn().mockResolvedValue({id:"i",stage:"intake"}),update:vi.fn().mockResolvedValue({id:"i"})},
+  evidenceItem:{deleteMany:vi.fn(),createMany:vi.fn()},
+  question:{deleteMany:vi.fn(),createMany:vi.fn()},
+ };
+ db.$transaction.mockImplementation(async callback=>callback(tx));
+ await complete({id:"j",investigationId:"i",leaseToken:"tok"},parsed,"gemma-4-31b-it",false);
+ expect(tx.evidenceItem.createMany).toHaveBeenCalledWith({data:parsed.evidence.map(e=>({investigationId:"i",...e}))});
+ expect(tx.question.createMany).toHaveBeenCalledWith({data:parsed.unknowns.map(q=>({investigationId:"i",text:q.question,blocking:q.blocking}))});
+ expect(tx.investigation.update).toHaveBeenCalledWith({
+  where:{id:"i"},
+  data:{stage:"analyzed",modelId:"gemma-4-31b-it",status:"pending",summary:parsed.summary,candidateAreas:parsed.candidateAreas},
+ });
+});

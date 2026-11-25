@@ -13,3 +13,5 @@ PatchSignal-API-Reference.docx
 # Office lock/temp files
 ~$*
 .~lock*
+# Tasteskill inspection artifacts
+.taste-skill/

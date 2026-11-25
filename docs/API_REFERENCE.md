@@ -28,33 +28,38 @@ Poll `GET /:id` or consume the SSE stream for progress. Stage values: `intake �
 
 ## 2. Authentication
 
-All `/api/investigations/*` and `/api/files/*` routes require `Authorization: Bearer <token>`. Without it they return `401 {"error":"Bearer token required"}`. Objects are scoped per user: reading another user's investigation returns `404 {"error":"not found"}` (no existence leak). Public routes: `/api/health`, `/api/openapi`, `/docs`, `/api/auth/signup`, `/api/auth/login`.
+All `/api/investigations/*`, `/api/files/*`, and `/api/auth/me` routes accept either an `HttpOnly; SameSite=Lax` `ps_session` cookie (set automatically by `/api/auth/signup` and `/api/auth/login`) OR an `Authorization: Bearer <token>` header, validated against the server-side `Session` table (with revocation support). Unauthenticated requests return `401 {"error":"Authentication required"}`. Objects are scoped per user: reading another user's investigation returns `404 {"error":"not found"}` (no existence leak). Public routes: `/api/health`, `/api/openapi`, `/docs`, `/api/auth/signup`, `/api/auth/login`, `/api/auth/logout`.
 
 ### POST /api/auth/signup — register (public)
 
-Body (JSON): `email` (required, valid email), `password` (required, min 8 chars), `name` (optional).
+Body (JSON): `email` (required, valid email), `password` (required, 8–128 chars), `name` (optional). Sets `HttpOnly` `ps_session` cookie and returns `{ user, token }`.
 
 ```
 // 201
 { "id": "cmvb20xj...", "email": "you@example.com", "name": "You",
+  "lastLoginAt": "2026-10-16T14:19:53.183Z",
   "createdAt": "2026-10-16T14:19:53.183Z",
   "token": "eyJhbGciOi..." }
 ```
 
-Errors: `400` bad email/short password, `409` email already registered, `503` auth misconfigured.
+Errors: `400` bad email/password length, `409` email already registered, `429` rate limit exceeded, `503` auth misconfigured.
 
 ### POST /api/auth/login — login (public)
 
-Body (JSON): `email`, `password`.
+Body (JSON): `email`, `password`. Updates `lastLoginAt`, sets `HttpOnly` `ps_session` cookie, and returns `{ user, token }`.
 
 ```
 // 200
-{ "id": "...", "email": "...", "name": "...", "createdAt": "...", "token": "eyJhbGciOi..." }
+{ "id": "...", "email": "...", "name": "...", "lastLoginAt": "...", "createdAt": "...", "token": "eyJhbGciOi..." }
 ```
 
-Errors: `401 {"error":"invalid credentials"}` (same for unknown email and wrong password).
+Errors: `401 {"error":"invalid credentials"}` (same for unknown email and wrong password), `429` rate limit exceeded.
 
-### GET /api/auth/me — current user (Bearer)
+### POST /api/auth/logout — revoke session & clear cookie
+
+Revokes the active `Session` record in Postgres and clears `ps_session`. Any reused cookie or Bearer `token` from that session returns `401` immediately.
+
+### GET /api/auth/me — current user (Session cookie or Bearer)
 
 ```
 // 200
@@ -85,6 +90,10 @@ fetch(url, { headers: { Authorization: "Bearer " + localStorage.getItem("ps_toke
 `store` is `postgres` (DATABASE_URL set) or `memory` (dev fallback). `db.ok false` means the API runs degraded.
 
 ## 4. Investigations
+
+### GET /api/investigations — list owned investigations (Bearer)
+
+Returns `{ "investigations": [...] }` sorted newest-first (up to 50) for the authenticated user, with `stage`, `status`, `summary`, `analysisJob`, `latestClassification`, `attachmentCount`, `evidenceCount`, and `blockingUnknowns`.
 
 ### POST /api/investigations — Stage 1 intake (Bearer, multipart)
 
@@ -138,7 +147,7 @@ Persists a background analysis job and responds immediately. It does not hold th
 }
 ```
 
-Response: **202 Accepted**, `Retry-After: 5`, `Cache-Control: no-store`. Poll authenticated `GET /api/investigations/:id` every five seconds. Its `analysisJob` contains `id`, `status` (`queued`, `running`, `completed`, `failed`), safe `error` and `updatedAt`. Lease tokens and internal attempt state are not public. Successful completion saves evidence/questions, sets `stage: analyzed` and completes the job atomically. Failure leaves the investigation without a verdict and exposes a retryable job error. Missing model configuration still produces explicitly labelled cached evidence (`modelId: cached-demo`). The worker preserves configured provider selection and passes up to three HTTPS screenshot URLs to URL-capable providers (Groq); the Gemini path still receives no image parts.
+Response: **202 Accepted**, `Retry-After: 5`, `Cache-Control: no-store`. Poll authenticated `GET /api/investigations/:id` every five seconds. Its `analysisJob` contains `id`, `status` (`queued`, `running`, `completed`, `failed`), safe `error` and `updatedAt`. Lease tokens and internal attempt state are not public. Successful completion saves evidence/questions, sets `stage: analyzed` and completes the job atomically. Failure leaves the investigation without a verdict and exposes a retryable job error. Missing model configuration still produces explicitly labelled cached evidence (`modelId: cached-demo`). The worker preserves configured provider selection and forwards up to three screenshots: Gemini receives uploaded Gemini Files API parts (`geminiFileUri`, uploaded at intake or downloaded from `secureUrl` by the worker), while Groq receives HTTPS `image_url` inputs.
 
 Repeated POSTs while queued/running return the same job; an explicit POST after failure requeues it. Already analyzed investigations return 200 without rerunning analysis. A database/migration error returns 503 before acceptance. Model failure is recorded on the job, not delivered later through the original POST response.
 
@@ -162,7 +171,9 @@ Reads repo metadata, default branch, latest commit SHA, recursive tree, manifest
 
 ### POST /api/investigations/:id/hypotheses — Stage 4 (Bearer)
 
-Body (JSON, all optional — defaults target the demo plus-sign bug): `statement`, `triggerConditions`, `expectedFailure`, `evidenceNeeded`.
+Body (JSON, all optional): `statement`, `triggerConditions`, `expectedFailure`, `evidenceNeeded`, `targetFile`, `content`.
+
+When a model key is configured (and `content` is not supplied), the backend reads up to 3 candidate files from the pinned repository tree via GitHub and proposes a hypothesis and Vitest test tailored to the investigation; when no model key is configured, it derives the hypothesis and target module from the investigation summary, evidence, and inspected file tree. All relative imports are validated against the inspected tree (`HYP-4`, returning `400` on missing/out-of-tree or forbidden imports). Returns `400` if the repository ecosystem is `unsupported`.
 
 ```
 // 201
@@ -171,7 +182,8 @@ Body (JSON, all optional — defaults target the demo plus-sign bug): `statement
   "expectedFailure": "Form shows 'Invalid email address', expected account creation",
   "evidenceNeeded": "Vitest run failing with predicted assertion on target, passing on control",
   "path": "tests/patchsignal/repro-inv_e049.test.ts",
-  "content": "import { describe ... } from \"vitest\"; ..." }
+  "content": "import { describe ... } from \"vitest\"; ...",
+  "modelId": "gemma-4-31b-it" }
 ```
 
 The test asserts correct behavior (fails on the bug, passes when fixed) and is stored as an artifact — never committed to the target repo.
@@ -199,14 +211,16 @@ Classification rules (deterministic, model never decides): `Reproduced` (CLS-2: 
 // 200
 { "markdown": "# PatchSignal evidence package — inv_...",
   "issueUrl": "https://github.com/{owner}/{repo}/issues/new?title=...&body=...",
-  "copyToClipboard": false }
+  "copyToClipboard": false,
+  "readyToFile": true,
+  "blockingUnknowns": 0 }
 ```
 
-Render the markdown with an Edit-everything step, then an **Open on GitHub** button → `issueUrl` (prefilled new-issue page; nothing is ever posted automatically). If `copyToClipboard` is true the body exceeded URL limits — offer copy instead. Show "Not ready to file" while blocking unknowns remain.
+Returns full Markdown including summary, status/rule/justification, expected vs actual, provenance-tagged evidence items, questions/unknowns, hypothesis/test path, execution runs, and revision details, and advances `stage` to `packaged` once classified. Render the markdown with an Edit-everything step, then an **Open on GitHub** button → `issueUrl` (prefilled new-issue page; nothing is ever posted automatically). If `copyToClipboard` is true the body exceeded URL limits — offer copy instead. Show "Not ready to file" while `readyToFile` is `false` (`blockingUnknowns > 0`).
 
 ### GET /api/files/:attachmentId — attachment lookup (Bearer)
 
-Resolves an attachment to its Cloudinary `secureUrl`. In practice read `attachments[]` from `GET /:id` and hotlink the CDN URL directly.
+Resolves an owned attachment (`id` or `publicId`) to its metadata (`{ id, publicId, secureUrl, mime, sizeBytes, width, height, investigationId }`), returning `404` when missing or owned by another user. In practice you can also read `attachments[]` from `GET /:id` and hotlink the CDN `secureUrl` directly.
 
 ## 5. Error catalog
 

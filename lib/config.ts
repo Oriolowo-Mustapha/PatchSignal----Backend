@@ -1,7 +1,7 @@
 export const config = {
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   gemmaPrimary: process.env.GEMMA_PRIMARY ?? "gemma-4-31b-it",
-  gemmaFallback: process.env.GEMMA_FALLBACK ?? "gemma-4-26b-a4b-it",
+  gemmaFallback: process.env.GEMMA_FALLBACK ?? "gemini-3.5-flash-lite",
   githubToken: process.env.GITHUB_TOKEN ?? "",
   allowlist: (process.env.ALLOWLIST_REPOS ?? "patchsignal/demo-signup")
     .split(",")

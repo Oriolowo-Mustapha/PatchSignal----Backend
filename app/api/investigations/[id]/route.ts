@@ -8,7 +8,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { id } = await params;
   const inv = await getInvestigation(id);
   if (!owns(inv as { userId?: string | null }, auth.userId)) {
-    return NextResponse.json({ error: "not found" }, { status: 404 });
+    return NextResponse.json({ error: "not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
   }
-  return NextResponse.json(inv);
+  return NextResponse.json(inv, { headers: { "Cache-Control": "no-store" } });
 }

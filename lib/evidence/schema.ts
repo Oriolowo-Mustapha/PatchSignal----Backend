@@ -63,7 +63,12 @@ export const recordEvidenceSchema = z.object({
     })
   ),
   candidateAreas: z
-    .array(z.object({ path: z.string().min(1), provenance: z.literal("hypothesis") }))
+    .array(
+      z.object({
+        path: z.string().min(1),
+        provenance: z.preprocess(() => "hypothesis", z.literal("hypothesis")),
+      })
+    )
     .default([]),
 });
 
@@ -123,7 +128,10 @@ export const recordEvidenceFunctionDeclaration = {
         type: "ARRAY",
         items: {
           type: "OBJECT",
-          properties: { path: { type: "STRING" } },
+          properties: {
+            path: { type: "STRING" },
+            provenance: { type: "STRING", enum: ["hypothesis"] },
+          },
           required: ["path"],
         },
       },
