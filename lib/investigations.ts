@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db/client";
+import { withDbRetry } from "@/lib/db/retry";
 import { memoryStore, useMemoryStore, type StoredInvestigation } from "@/lib/store";
 
 export type NormalizedHypothesis = {
@@ -46,20 +47,22 @@ export type NormalizedRun = {
 
 export async function getInvestigation(id: string) {
   if (useMemoryStore()) return memoryStore.get(id);
-  const inv = await prisma.investigation.findUnique({
-    where: { id },
-    include: {
-      analysisJob: { select: { id: true, status: true, error: true, updatedAt: true } },
-      evidence: { orderBy: { createdAt: "asc" } },
-      questions: true,
-      hypotheses: {
-        orderBy: { rank: "asc" },
-        include: { tests: true, runs: { orderBy: { createdAt: "asc" } } },
+  const inv = await withDbRetry(() =>
+    prisma.investigation.findUnique({
+      where: { id },
+      include: {
+        analysisJob: { select: { id: true, status: true, error: true, updatedAt: true } },
+        evidence: { orderBy: { createdAt: "asc" } },
+        questions: true,
+        hypotheses: {
+          orderBy: { rank: "asc" },
+          include: { tests: true, runs: { orderBy: { createdAt: "asc" } } },
+        },
+        attachments: { orderBy: { createdAt: "asc" } },
+        classifications: { orderBy: { decidedAt: "asc" } },
       },
-      attachments: { orderBy: { createdAt: "asc" } },
-      classifications: { orderBy: { decidedAt: "asc" } },
-    },
-  });
+    })
+  );
   return inv;
 }
 

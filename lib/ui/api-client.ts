@@ -1,5 +1,9 @@
 "use client";
 
+import type { RemediationData, PullRequestState } from "@/lib/remediation/types";
+
+export type { FilePatch, RemediationIteration, PullRequestState, RemediationData } from "@/lib/remediation/types";
+
 export type HealthResponse = {
   ok: boolean;
   db: { ok: boolean; error?: string };
@@ -78,6 +82,7 @@ export type InvestigationDetailRecord = {
     manifest?: string | null;
     pkg?: Record<string, unknown> | null;
     ecosystem?: string;
+    remediation?: RemediationData;
   } | null;
   inspection?: {
     defaultBranch?: string;
@@ -87,6 +92,7 @@ export type InvestigationDetailRecord = {
     manifest?: string | null;
     pkg?: Record<string, unknown> | null;
     ecosystem?: string;
+    remediation?: RemediationData;
   } | null;
   analysisJob?: AnalysisJobView | null;
   evidence?:
@@ -178,9 +184,11 @@ export function clearLegacyStoredToken() {
 
 export class ApiRequestError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -196,9 +204,9 @@ async function requestJson<T>(url: string, init: RequestInit = {}, token?: strin
     credentials: "same-origin",
     cache: "no-store",
   });
-  const data = (await res.json().catch(() => ({}))) as { error?: string } & T;
+  const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string } & T;
   if (!res.ok) {
-    throw new ApiRequestError(res.status, data.error || `Request failed (${res.status})`);
+    throw new ApiRequestError(res.status, data.error || `Request failed (${res.status})`, data.code);
   }
   return data;
 }
@@ -255,6 +263,33 @@ export const apiClient = {
   runSandbox: (id: string, body: Record<string, unknown>, token?: string | null) =>
     requestJson<Record<string, unknown>>(
       `/api/investigations/${id}/runs`,
+      { method: "POST", body: JSON.stringify(body) },
+      token
+    ),
+  remediate: (
+    id: string,
+    body: { maxAttempts?: number; customInstruction?: string } = {},
+    token?: string | null
+  ) =>
+    requestJson<{ remediation: RemediationData }>(
+      `/api/investigations/${id}/remediate`,
+      { method: "POST", body: JSON.stringify(body) },
+      token
+    ),
+  createPullRequest: (
+    id: string,
+    body: {
+      approved: boolean;
+      title?: string;
+      body?: string;
+      branchName?: string;
+      baseBranch?: string;
+      githubToken?: string;
+    },
+    token?: string | null
+  ) =>
+    requestJson<{ pr: PullRequestState; remediation: RemediationData }>(
+      `/api/investigations/${id}/pr`,
       { method: "POST", body: JSON.stringify(body) },
       token
     ),

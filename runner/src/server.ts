@@ -7,13 +7,13 @@
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, normalize } from "node:path";
+import { dirname, join, normalize } from "node:path";
 
 const TOKEN = process.env.RUNNER_TOKEN ?? "";
 const PORT = Number(process.env.RUNNER_PORT ?? 5001);
-const ALLOWED = new Set(["vitest-json"]);
+const ALLOWED = new Set(["vitest-json", "verify-patch"]);
 const TIMEOUT_MS = 120_000;
 const MOUNT_POINT = "/repo/tests/patchsignal";
 
@@ -107,6 +107,7 @@ const server = createServer(async (req, res) => {
     jobId: string;
     image: string;
     command: string;
+    verifyCmd?: string;
     timeoutSec: number;
     files: { path: string; content: string }[];
     repo: { owner: string; name: string; sha: string };
@@ -125,16 +126,65 @@ const server = createServer(async (req, res) => {
     res.writeHead(400).end("image and files[] required");
     return;
   }
-  const testRel = safeTestPath(spec.files[0]?.path ?? "");
-  if (!testRel) {
-    res.writeHead(400).end("files[0].path must be tests/patchsignal/*.test.ts");
-    return;
-  }
 
   busy = true;
   const started = Date.now();
   const tmp = await mkdtemp(join(tmpdir(), "ps-"));
   try {
+    if (spec.command === "verify-patch") {
+      const repoUrl = `https://github.com/${spec.repo.owner}/${spec.repo.name}.git`;
+      await run("git", ["clone", "--depth", "1", repoUrl, tmp], 45_000);
+      if (spec.repo.sha) {
+        await run("git", ["-C", tmp, "checkout", spec.repo.sha], 15_000);
+      }
+      for (const f of spec.files) {
+        const clean = normalize(f.path).replace(/\\/g, "/").replace(/^\.\//, "");
+        if (!clean || clean.includes("..") || typeof f.content !== "string" || f.content.length > 200_000) {
+          res.writeHead(400).end("bad file entry");
+          return;
+        }
+        const dest = join(tmp, clean);
+        await mkdir(dirname(dest), { recursive: true });
+        await writeFile(dest, f.content, "utf8");
+      }
+      const name = `ps_${randomUUID().slice(0, 8)}`;
+      const verifyCmd = (spec.verifyCmd || "npm test").split(/[\r\n;&|]/)[0]?.trim() || "npm test";
+      const args = [
+        "run", "--rm", "--name", name,
+        "--cpus", "2",
+        "--memory", "2048m",
+        "--pids-limit", "512",
+        "-v", `${tmp}:/workspace`,
+        "-w", "/workspace",
+        spec.image,
+        "sh", "-lc", verifyCmd,
+      ];
+      const timeoutMs = Math.min((spec.timeoutSec || 120) * 1000, TIMEOUT_MS);
+      const { code, stdout, stderr, timedOut } = await run("docker", args, timeoutMs + 5000);
+      await run("docker", ["rm", "-f", name], 15000);
+      const durationMs = Date.now() - started;
+      const outcome = timedOut ? "timeout" : code === 0 ? "passed" : code > 0 && code < 125 ? "failed" : "error";
+      const trunc = (s: string) => (s.length > 8000 ? s.slice(0, 8000) + "\n…[truncated]" : s);
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          jobId: spec.jobId,
+          exitCode: code,
+          durationMs,
+          outcome,
+          stdout: trunc(stdout),
+          stderr: trunc(stderr),
+          imageDigest: await imageDigest(spec.image),
+          truncated: stdout.length > 8000 || stderr.length > 8000,
+        })
+      );
+      return;
+    }
+
+    const testRel = safeTestPath(spec.files[0]?.path ?? "");
+    if (!testRel) {
+      res.writeHead(400).end("files[0].path must be tests/patchsignal/*.test.ts");
+      return;
+    }
     for (const f of spec.files) {
       const rel = safeTestPath(f.path);
       if (!rel || typeof f.content !== "string" || f.content.length > 200_000) {

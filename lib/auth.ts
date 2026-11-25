@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
+import { withDbRetry } from "@/lib/db/retry";
 import { canUseMemoryAuth, memorySessionStore, memoryUserStore } from "@/lib/store";
 
 export const SESSION_COOKIE_NAME = "ps_session";
@@ -10,11 +11,16 @@ export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const RATE_LIMIT_MAX_ATTEMPTS = 20;
+const SESSION_CACHE_TTL_MS = 20_000;
 
 const globalForAuth = globalThis as unknown as {
   __ps_devJwtSecret?: string;
   __ps_devJwtWarned?: boolean;
   __ps_authRateBuckets?: Map<string, number[]>;
+  __ps_verifiedSessionCache?: Map<
+    string,
+    { userId: string; expiresAtMs: number; cachedUntil: number }
+  >;
 };
 
 function secret(): string {
@@ -225,6 +231,10 @@ export function extractToken(req: Request): string | null {
   return parseCookieValue(req.headers.get("cookie"), SESSION_COOKIE_NAME);
 }
 
+function getVerifiedSessionCache() {
+  return (globalForAuth.__ps_verifiedSessionCache ??= new Map());
+}
+
 function unauthorized(message = "Authentication required"): NextResponse {
   return NextResponse.json(
     { error: message },
@@ -242,10 +252,16 @@ export async function authUser(req: Request): Promise<{ userId: string } | NextR
   if (!token) {
     return unauthorized("Authentication required");
   }
-  try {
-    const payload = jwt.verify(token, secret()) as { sub?: string; jti?: string };
-    if (!payload.sub) return unauthorized("invalid or expired token");
 
+  let payload: { sub?: string; jti?: string };
+  try {
+    payload = jwt.verify(token, secret()) as { sub?: string; jti?: string };
+  } catch {
+    return unauthorized("invalid or expired token");
+  }
+  if (!payload.sub) return unauthorized("invalid or expired token");
+
+  try {
     if (payload.jti) {
       const tokenHash = hashSessionJti(payload.jti);
       if (canUseMemoryAuth()) {
@@ -258,27 +274,71 @@ export async function authUser(req: Request): Promise<{ userId: string } | NextR
         ) {
           return unauthorized("session revoked or expired");
         }
-      } else {
-        const ses = await prisma.session.findUnique({
-          where: { tokenHash },
-          select: { userId: true, revokedAt: true, expiresAt: true },
-        });
-        if (
-          !ses ||
-          ses.userId !== payload.sub ||
-          ses.revokedAt !== null ||
-          ses.expiresAt.getTime() <= Date.now()
-        ) {
-          return unauthorized("session revoked or expired");
-        }
+        const user = await findUserById(payload.sub);
+        if (!user) return unauthorized("user not found");
+        return { userId: user.id };
       }
+
+      const now = Date.now();
+      const cache = process.env.NODE_ENV !== "test" ? getVerifiedSessionCache() : null;
+      const cached = cache?.get(tokenHash);
+      if (
+        cached &&
+        cached.userId === payload.sub &&
+        cached.cachedUntil > now &&
+        cached.expiresAtMs > now
+      ) {
+        return { userId: cached.userId };
+      }
+
+      const ses = await withDbRetry(() =>
+        prisma.session.findUnique({
+          where: { tokenHash },
+          select: {
+            userId: true,
+            revokedAt: true,
+            expiresAt: true,
+            user: { select: { id: true } },
+          },
+        })
+      );
+      if (
+        !ses ||
+        ses.userId !== payload.sub ||
+        ses.revokedAt !== null ||
+        ses.expiresAt.getTime() <= Date.now()
+      ) {
+        cache?.delete(tokenHash);
+        return unauthorized("session revoked or expired");
+      }
+      if (ses.user === null) {
+        cache?.delete(tokenHash);
+        return unauthorized("user not found");
+      }
+      if (ses.user === undefined) {
+        const user = await withDbRetry(() => findUserById(payload.sub!));
+        if (!user) return unauthorized("user not found");
+      }
+      cache?.set(tokenHash, {
+        userId: ses.userId,
+        expiresAtMs: ses.expiresAt.getTime(),
+        cachedUntil: now + SESSION_CACHE_TTL_MS,
+      });
+      return { userId: ses.userId };
     }
 
-    const user = await findUserById(payload.sub);
+    const user = await withDbRetry(() => findUserById(payload.sub!));
     if (!user) return unauthorized("user not found");
     return { userId: user.id };
-  } catch {
-    return unauthorized("invalid or expired token");
+  } catch (err) {
+    console.error(
+      "[auth] database error during session check:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return NextResponse.json(
+      { error: "Database connection busy. Please retry in a moment." },
+      { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "2" } }
+    );
   }
 }
 
@@ -290,13 +350,16 @@ export async function revokeSessionFromRequest(req: Request): Promise<void> {
     const payload = jwt.verify(token, secret()) as { sub?: string; jti?: string };
     if (!payload.jti) return;
     const tokenHash = hashSessionJti(payload.jti);
+    getVerifiedSessionCache().delete(tokenHash);
     if (canUseMemoryAuth()) {
       memorySessionStore.revokeByTokenHash(tokenHash, new Date().toISOString());
     } else {
-      await prisma.session.updateMany({
-        where: { tokenHash, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
+      await withDbRetry(() =>
+        prisma.session.updateMany({
+          where: { tokenHash, revokedAt: null },
+          data: { revokedAt: new Date() },
+        })
+      );
     }
   } catch {
     // Token already invalid or expired; still clear cookie on caller response

@@ -395,6 +395,73 @@ const tree = await res.json();`,
 }`,
   },
   {
+    id: "inv-remediate",
+    group: "Investigations & Verification",
+    method: "POST",
+    path: "/api/investigations/{id}/remediate",
+    auth: "Authenticated",
+    summary: "Diagnose the root cause, propose file fixes, and iterate inside an isolated container/sandbox until checks pass",
+    fields: [
+      { name: "maxAttempts", type: "number", description: "Maximum repair attempts before stopping (1–5, default 3)" },
+      { name: "customInstruction", type: "string", description: "Optional maintainer hint or file focus guidance" },
+    ],
+    responses: [
+      { status: "200", description: "Remediation status, code patches, iteration logs, and pending PR draft" },
+      { status: "502", description: "Fix generation or sandbox execution failed" },
+    ],
+    curl: `curl -X POST http://localhost:3000/api/investigations/inv_12345/remediate \\
+  -H "Authorization: Bearer <token>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"maxAttempts":3}'`,
+    ts: `const res = await fetch("/api/investigations/inv_12345/remediate", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ maxAttempts: 3 }),
+});`,
+    sampleJson: `{
+  "remediation": {
+    "status": "succeeded",
+    "currentAttempt": 1,
+    "pr": { "status": "awaiting_approval", "branchName": "patchsignal/fix-inv12345" }
+  }
+}`,
+  },
+  {
+    id: "inv-pr",
+    group: "Investigations & Verification",
+    method: "POST",
+    path: "/api/investigations/{id}/pr",
+    auth: "Authenticated",
+    summary: "After explicit user approval, push verified fix commits to a branch and open a GitHub Pull Request",
+    fields: [
+      { name: "approved", type: "boolean", required: true, description: "Must be true to grant explicit permission to open a PR" },
+      { name: "title", type: "string", description: "Optional edited Pull Request title" },
+      { name: "body", type: "string", description: "Optional edited Pull Request body markdown" },
+      { name: "branchName", type: "string", description: "Optional target branch name" },
+    ],
+    responses: [
+      { status: "201", description: "Pull Request created with URL, number, and head commit SHA" },
+      { status: "400", description: "Explicit approval missing or no verified patches available" },
+      { status: "403", description: "Write-scoped GitHub token required to create branch/PR" },
+    ],
+    curl: `curl -X POST http://localhost:3000/api/investigations/inv_12345/pr \\
+  -H "Authorization: Bearer <token>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"approved":true}'`,
+    ts: `const res = await fetch("/api/investigations/inv_12345/pr", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ approved: true }),
+});`,
+    sampleJson: `{
+  "pr": {
+    "status": "created",
+    "prNumber": 42,
+    "prUrl": "https://github.com/owner/repo/pull/42"
+  }
+}`,
+  },
+  {
     id: "inv-package",
     group: "Investigations & Verification",
     method: "GET",

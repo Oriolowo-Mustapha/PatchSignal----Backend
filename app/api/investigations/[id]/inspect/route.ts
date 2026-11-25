@@ -15,21 +15,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     userId?: string | null;
     owner: string;
     repo: string;
+    inspectionJson?: Record<string, unknown> | null;
+    inspection?: Record<string, unknown> | null;
   } | null;
   if (!inv || !owns(inv, auth.userId)) return NextResponse.json({ error: "not found" }, { status: 404 });
   try {
-    const inspection = await inspectRepo(inv.owner, inv.repo);
-    // Unsupported ecosystem ends the pipeline here with an official
-    // backend verdict (CLS-4): setup/tooling failure is Inconclusive,
-    // never Not reproduced. The frontend must read status/classification.
-    if (inspection.ecosystem !== "node-vitest") {
+    const existingInspection = inv.inspectionJson ?? inv.inspection ?? null;
+    const existingRemediation =
+      existingInspection && typeof existingInspection === "object"
+        ? (existingInspection as { remediation?: unknown }).remediation
+        : undefined;
+    const rawInspection = await inspectRepo(inv.owner, inv.repo);
+    const inspection =
+      existingRemediation !== undefined
+        ? { ...rawInspection, remediation: existingRemediation }
+        : rawInspection;
+    // Empty/unsupported repositories end cleanly with Inconclusive (CLS-4).
+    if (rawInspection.ecosystem === "unsupported") {
       const justification =
-        `Repository ecosystem "${inspection.ecosystem}" is not supported by the v0.1 runner ` +
-        `(node-vitest only). No reproduction attempted; this does not imply the bug is absent.`;
+        `Repository ecosystem "${rawInspection.ecosystem}" could not be detected cleanly. ` +
+        `No reproduction attempted; this does not imply the bug is absent.`;
       if (useMemoryStore()) {
         memoryStore.update(id, {
           inspection,
-          commitSha: inspection.sha,
+          commitSha: rawInspection.sha,
           controlSha: process.env.CONTROL_SHA || undefined,
           stage: "inspected",
           status: "Inconclusive",
@@ -39,7 +48,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         await prisma.investigation.update({
           where: { id },
           data: {
-            commitSha: inspection.sha,
+            commitSha: rawInspection.sha,
             controlSha: process.env.CONTROL_SHA || null,
             inspectionJson: inspection as unknown as Prisma.InputJsonValue,
             stage: "inspected",
@@ -55,7 +64,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (useMemoryStore()) {
       memoryStore.update(id, {
         inspection,
-        commitSha: inspection.sha,
+        commitSha: rawInspection.sha,
         controlSha: process.env.CONTROL_SHA || undefined,
         stage: "inspected",
       });
@@ -63,7 +72,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       await prisma.investigation.update({
         where: { id },
         data: {
-          commitSha: inspection.sha,
+          commitSha: rawInspection.sha,
           controlSha: process.env.CONTROL_SHA || null,
           inspectionJson: inspection as unknown as Prisma.InputJsonValue,
           stage: "inspected",

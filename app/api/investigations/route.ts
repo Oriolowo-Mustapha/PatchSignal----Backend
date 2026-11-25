@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { config, isAllowlisted } from "@/lib/config";
 import { memoryStore, useMemoryStore, type StoredAttachment } from "@/lib/store";
 import { prisma } from "@/lib/db/client";
+import { withDbRetry } from "@/lib/db/retry";
 import { authUser } from "@/lib/auth";
 import { uploadScreenshot } from "@/lib/cloudinary/client";
 import { uploadImageToGemini } from "@/lib/gemma/client";
@@ -60,18 +61,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ investigations: items }, { headers: { "Cache-Control": "no-store" } });
   }
 
-  const rows = await prisma.investigation.findMany({
-    where: { userId: auth.userId },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-    include: {
-      analysisJob: { select: { id: true, status: true, error: true, updatedAt: true } },
-      evidence: { select: { text: true, provenance: true, source: true } },
-      questions: { select: { text: true, blocking: true } },
-      attachments: { select: { id: true } },
-      classifications: { orderBy: { decidedAt: "asc" }, select: { status: true, rule: true, justification: true } },
-    },
-  });
+  const rows = await withDbRetry(() =>
+    prisma.investigation.findMany({
+      where: { userId: auth.userId },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include: {
+        analysisJob: { select: { id: true, status: true, error: true, updatedAt: true } },
+        evidence: { select: { text: true, provenance: true, source: true } },
+        questions: { select: { text: true, blocking: true } },
+        attachments: { select: { id: true } },
+        classifications: { orderBy: { decidedAt: "asc" }, select: { status: true, rule: true, justification: true } },
+      },
+    })
+  );
   const investigations = rows.map((row) => toInvestigationSummary(row as unknown as Record<string, unknown>));
   return NextResponse.json({ investigations }, { headers: { "Cache-Control": "no-store" } });
 }

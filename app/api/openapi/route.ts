@@ -249,6 +249,29 @@ export async function GET() {
           responses: { "200": { description: "{ target, control, status, rule, justification }" } },
         },
       },
+      "/api/investigations/{id}/remediate": {
+        post: {
+          tags: ["investigations"],
+          summary: "Diagnose root cause, suggest fix, and loop verification in container/sandbox till exit 0",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "{ remediation }" },
+            "502": { description: "remediation loop failed" },
+          },
+        },
+      },
+      "/api/investigations/{id}/pr": {
+        post: {
+          tags: ["investigations"],
+          summary: "Create GitHub Pull Request for verified fix after explicit user approval (approved: true)",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "201": { description: "{ pr, remediation }" },
+            "400": { description: "approved: true required or no patches found" },
+            "403": { description: "GITHUB_WRITE_TOKEN_NEEDED" },
+          },
+        },
+      },
       "/api/investigations/{id}/package": {
         get: {
           tags: ["investigations"],

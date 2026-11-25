@@ -155,20 +155,65 @@ export async function runOne() {
 const registry = globalThis as typeof globalThis & {
   __ps_workerStarted?: boolean;
   __ps_runOne?: () => Promise<boolean>;
+  __ps_workerTimer?: ReturnType<typeof setTimeout>;
+  __ps_workerRunning?: boolean;
+  __ps_workerFailures?: number;
 };
 registry.__ps_runOne = runOne;
 
+const IDLE_POLL_MS = 15_000;
+const MAX_BACKOFF_MS = 120_000;
+
+function scheduleTick(delayMs: number) {
+  if (registry.__ps_workerTimer) {
+    clearTimeout(registry.__ps_workerTimer);
+  }
+  registry.__ps_workerTimer = setTimeout(async () => {
+    registry.__ps_workerTimer = undefined;
+    let processed = false;
+    let failed = false;
+    if (!registry.__ps_workerRunning) {
+      registry.__ps_workerRunning = true;
+      try {
+        processed = await (registry.__ps_runOne ? registry.__ps_runOne() : runOne());
+      } catch (err) {
+        failed = true;
+        const failures = (registry.__ps_workerFailures ?? 0) + 1;
+        registry.__ps_workerFailures = failures;
+        // Log the first failure and then every 5th so an unreachable DB doesn't flood the console.
+        if (failures === 1 || failures % 5 === 0) {
+          const reason = err instanceof Error ? err.message.split("\n").filter(Boolean).pop() : String(err);
+          console.error(
+            `[analysis-worker] database unreachable (attempt ${failures}); backing off. ${reason ?? ""}`.trim()
+          );
+        }
+      } finally {
+        registry.__ps_workerRunning = false;
+      }
+    }
+    if (!failed && registry.__ps_workerFailures) {
+      console.info("[analysis-worker] database connection restored.");
+      registry.__ps_workerFailures = 0;
+    }
+    const backoff = failed
+      ? Math.min(IDLE_POLL_MS * 2 ** Math.min((registry.__ps_workerFailures ?? 1) - 1, 4), MAX_BACKOFF_MS)
+      : processed
+        ? 250
+        : IDLE_POLL_MS;
+    scheduleTick(backoff);
+  }, delayMs);
+  registry.__ps_workerTimer.unref();
+}
+
 export function startAnalysisWorker() {
   registry.__ps_runOne = runOne;
-  if (registry.__ps_workerStarted || process.env.NEXT_PHASE === "phase-production-build") return;
-  registry.__ps_workerStarted = true;
-  async function tick() {
-    try {
-      await (registry.__ps_runOne ? registry.__ps_runOne() : runOne());
-    } catch {
-      console.error("Analysis queue unavailable; retrying on next poll.");
-    }
-    setTimeout(() => void tick(), 2000).unref();
+  if (process.env.NEXT_PHASE === "phase-production-build") return;
+  if (!registry.__ps_workerStarted) {
+    registry.__ps_workerStarted = true;
+    // Give the server a moment to finish booting before the first DB poll.
+    scheduleTick(3_000);
+    return;
   }
-  setTimeout(() => void tick(), 0).unref();
+  // Wake immediately when a new job is enqueued while worker is idle.
+  scheduleTick(100);
 }
