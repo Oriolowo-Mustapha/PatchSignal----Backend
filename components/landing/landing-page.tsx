@@ -7,14 +7,15 @@ import {
   ArrowRight,
   ArrowUpRight,
   BookOpen,
+  ChevronRight,
   Compass,
   FolderGit2,
+  LayoutDashboard,
   LogIn,
-  Menu,
+  Search,
   ShieldCheck,
   TerminalSquare,
   UserPlus,
-  X,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { CodeBlockTabs } from "@/components/ui/code-block-tabs";
@@ -142,6 +143,20 @@ export function LandingPage({ initialAuthenticated = false }: { initialAuthentic
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const [paletteOpen, setPaletteOpen] = React.useState(false);
 
+  React.useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mobileMenuOpen]);
+
   const jumpTo = React.useCallback((hash: string) => {
     const el = document.querySelector(hash);
     if (el) el.scrollIntoView({ behavior: "smooth" });
@@ -266,58 +281,163 @@ export function LandingPage({ initialAuthenticated = false }: { initialAuthentic
             </Link>
           </div>
 
-          <button
-            type="button"
-            className="ps-nav__menu-btn"
-            aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
-            aria-expanded={mobileMenuOpen}
-            aria-controls="ps-mobile-nav"
-            onClick={() => setMobileMenuOpen((v) => !v)}
-          >
-            {mobileMenuOpen ? (
-              <X size={18} strokeWidth={1.5} aria-hidden="true" />
-            ) : (
-              <Menu size={18} strokeWidth={1.5} aria-hidden="true" />
-            )}
-          </button>
+          <div className="ps-nav__mobile-controls">
+            <button
+              type="button"
+              className="ps-nav__search-btn"
+              aria-label="Search sections, workspace, or docs"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                setPaletteOpen(true);
+              }}
+            >
+              <Search size={16} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="ps-nav__menu-btn"
+              aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="ps-mobile-nav"
+              onClick={() => setMobileMenuOpen((v) => !v)}
+            >
+              <span className={`ps-burger ${mobileMenuOpen ? "is-open" : ""}`} aria-hidden="true">
+                <span className="ps-burger__line" />
+                <span className="ps-burger__line" />
+              </span>
+            </button>
+          </div>
         </div>
-
-        {mobileMenuOpen ? (
-          <nav id="ps-mobile-nav" className="ps-mobile-nav" aria-label="Mobile navigation">
-            <a href="#pipeline" className="ps-mobile-nav__link" onClick={() => setMobileMenuOpen(false)}>
-              Architecture
-            </a>
-            <a href="#verdicts" className="ps-mobile-nav__link" onClick={() => setMobileMenuOpen(false)}>
-              Verdicts
-            </a>
-            <a href="#standards" className="ps-mobile-nav__link" onClick={() => setMobileMenuOpen(false)}>
-              Standards
-            </a>
-            <Link
-              href={isAuthenticated ? "/workspace" : "/dashboard"}
-              className="ps-mobile-nav__link"
-              onClick={() => setMobileMenuOpen(false)}
-            >
-              {isAuthenticated ? "Workspace" : "Dashboard"}
-            </Link>
-            <Link href="/docs" className="ps-mobile-nav__link" onClick={() => setMobileMenuOpen(false)}>
-              API Docs
-            </Link>
-            {!isAuthenticated ? (
-              <Link href="/login" className="ps-mobile-nav__link" onClick={() => setMobileMenuOpen(false)}>
-                Sign in
-              </Link>
-            ) : null}
-            <Link
-              href={isAuthenticated ? "/dashboard" : "/workspace"}
-              className="ps-mobile-nav__cta"
-              onClick={() => setMobileMenuOpen(false)}
-            >
-              {isAuthenticated ? "Dashboard" : "Open workspace"}
-            </Link>
-          </nav>
-        ) : null}
       </header>
+
+      {mobileMenuOpen ? (
+        <>
+          <div
+            className="ps-mobile-backdrop"
+            aria-hidden="true"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+          <nav id="ps-mobile-nav" className="ps-mobile-nav" aria-label="Mobile navigation">
+            <div className="ps-mobile-nav__group">
+              <div className="ps-mobile-nav__group-label">On this page</div>
+              <div className="ps-mobile-nav__list">
+                <a
+                  href="#pipeline"
+                  className="ps-mobile-nav__row"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <span className="ps-mobile-nav__icon" aria-hidden="true">
+                    <Compass size={16} strokeWidth={1.5} />
+                  </span>
+                  <span className="ps-mobile-nav__text">
+                    <span className="ps-mobile-nav__title">Architecture</span>
+                    <span className="ps-mobile-nav__desc">Signal pipeline and stage timing</span>
+                  </span>
+                  <ChevronRight size={15} strokeWidth={1.75} className="ps-mobile-nav__chev" aria-hidden="true" />
+                </a>
+                <a
+                  href="#verdicts"
+                  className="ps-mobile-nav__row"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <span className="ps-mobile-nav__icon" aria-hidden="true">
+                    <TerminalSquare size={16} strokeWidth={1.5} />
+                  </span>
+                  <span className="ps-mobile-nav__text">
+                    <span className="ps-mobile-nav__title">Verdicts</span>
+                    <span className="ps-mobile-nav__desc">Interactive outcome simulator</span>
+                  </span>
+                  <ChevronRight size={15} strokeWidth={1.75} className="ps-mobile-nav__chev" aria-hidden="true" />
+                </a>
+                <a
+                  href="#standards"
+                  className="ps-mobile-nav__row"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <span className="ps-mobile-nav__icon" aria-hidden="true">
+                    <ShieldCheck size={16} strokeWidth={1.5} />
+                  </span>
+                  <span className="ps-mobile-nav__text">
+                    <span className="ps-mobile-nav__title">Standards</span>
+                    <span className="ps-mobile-nav__desc">Six mechanical safety rules</span>
+                  </span>
+                  <ChevronRight size={15} strokeWidth={1.75} className="ps-mobile-nav__chev" aria-hidden="true" />
+                </a>
+              </div>
+            </div>
+
+            <div className="ps-mobile-nav__group">
+              <div className="ps-mobile-nav__group-label">Platform</div>
+              <div className="ps-mobile-nav__tiles">
+                <Link
+                  href={isAuthenticated ? "/workspace" : "/dashboard"}
+                  className="ps-mobile-tile"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <span className="ps-mobile-tile__head">
+                    {isAuthenticated ? (
+                      <FolderGit2 size={16} strokeWidth={1.5} aria-hidden="true" />
+                    ) : (
+                      <LayoutDashboard size={16} strokeWidth={1.5} aria-hidden="true" />
+                    )}
+                    <span>{isAuthenticated ? "Workspace" : "Dashboard"}</span>
+                  </span>
+                  <span className="ps-mobile-tile__sub">
+                    {isAuthenticated ? "Triage queue" : "Live overview"}
+                  </span>
+                </Link>
+
+                <Link
+                  href="/docs"
+                  className="ps-mobile-tile"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <span className="ps-mobile-tile__head">
+                    <BookOpen size={16} strokeWidth={1.5} aria-hidden="true" />
+                    <span>API Docs</span>
+                  </span>
+                  <span className="ps-mobile-tile__sub">REST reference</span>
+                </Link>
+              </div>
+            </div>
+
+            <div className="ps-mobile-nav__foot">
+              <Link
+                href={isAuthenticated ? "/dashboard" : "/workspace"}
+                className="ps-mobile-nav__cta"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                <span>{isAuthenticated ? "Dashboard" : "Open workspace"}</span>
+                <ArrowRight size={15} strokeWidth={1.75} aria-hidden="true" />
+              </Link>
+
+              {!isAuthenticated ? (
+                <div className="ps-mobile-nav__auth-row">
+                  <Link
+                    href="/login"
+                    className="ps-mobile-nav__auth-link"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Sign in
+                  </Link>
+                  <Link
+                    href="/signup"
+                    className="ps-mobile-nav__auth-link"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Create account
+                  </Link>
+                </div>
+              ) : (
+                <div className="ps-mobile-nav__meta">
+                  <span className="ps-signal-dot" aria-hidden="true" />
+                  <span>Session active</span>
+                </div>
+              )}
+            </div>
+          </nav>
+        </>
+      ) : null}
 
       <main id="main-content">
         {/* Stage 1: Full-width Architectural Studio Hero + Multi-pane Workbench */}
@@ -492,11 +612,11 @@ export function LandingPage({ initialAuthenticated = false }: { initialAuthentic
                 <tbody>
                   {STANDARDS_TABLE.map((row) => (
                     <tr key={row.standard}>
-                      <td className="mono num">{row.num}</td>
-                      <td>{row.standard}</td>
-                      <td>{row.condition}</td>
-                      <td>{row.handling}</td>
-                      <td>
+                      <td data-label="#" className="mono num">{row.num}</td>
+                      <td data-label="Standard">{row.standard}</td>
+                      <td data-label="When it applies">{row.condition}</td>
+                      <td data-label="How PatchSignal handles it">{row.handling}</td>
+                      <td data-label="Outcome">
                         <span
                           className={
                             row.verdict === "Reproduced"

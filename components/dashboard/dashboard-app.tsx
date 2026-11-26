@@ -27,6 +27,7 @@ import {
   type CommandPaletteItem,
 } from "@/components/ui/command-palette";
 import { DashboardSkeleton, Spinner } from "@/components/ui/loaders";
+import { ModalDialog } from "@/components/ui/modal-dialog";
 import { ScrollReveal } from "@/components/ui/scroll-reveal";
 import { SlidingTabs } from "@/components/ui/sliding-tabs";
 import { AuthPanel } from "@/components/workspace/auth-panel";
@@ -82,6 +83,7 @@ export function DashboardApp() {
   const [verdictFilter, setVerdictFilter] = React.useState<string | null>(null);
   const [repoFilter, setRepoFilter] = React.useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = React.useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const loadDashboardData = React.useCallback(async (showSpinner = false) => {
@@ -323,6 +325,19 @@ export function DashboardApp() {
             title="Sign out"
           >
             <LogOut size={16} strokeWidth={1.5} aria-hidden="true" />
+          </button>
+
+          <button
+            type="button"
+            className="ws-btn dash-menu-btn"
+            aria-label={mobileNavOpen ? "Close navigation menu" : "Open navigation menu"}
+            aria-expanded={mobileNavOpen}
+            onClick={() => setMobileNavOpen((prev) => !prev)}
+          >
+            <span className={`dash-burger ${mobileNavOpen ? "is-open" : ""}`} aria-hidden="true">
+              <span className="dash-burger__line" />
+              <span className="dash-burger__line" />
+            </span>
           </button>
         </div>
       </header>
@@ -719,7 +734,7 @@ export function DashboardApp() {
                       <th scope="col">Verdict</th>
                       <th scope="col">PR / CI status</th>
                       <th scope="col">Created</th>
-                      <th scope="col" style={{ textAlign: "right" }}>Action</th>
+                      <th scope="col" className="dash-table__action-cell">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -732,15 +747,15 @@ export function DashboardApp() {
                             <div className="dash-row-repo">{`${inv.owner}/${inv.repo}`}</div>
                             <div className="dash-row-desc">{inv.summary || inv.description}</div>
                           </td>
-                          <td>
+                          <td data-label="Stage">
                             <span className="ws-pill">{STAGE_LABELS[inv.stage] ?? inv.stage}</span>
                           </td>
-                          <td>
+                          <td data-label="Verdict">
                             <span className={verdictBadgeClass(inv.status)}>
                               {inv.status.replace("_", " ")}
                             </span>
                           </td>
-                          <td>
+                          <td data-label="PR / CI">
                             {prNum ? (
                               <span
                                 className={
@@ -768,10 +783,14 @@ export function DashboardApp() {
                               <span style={{ color: "var(--ink-muted)", fontSize: 12 }}>—</span>
                             )}
                           </td>
-                          <td className="num" style={{ color: "var(--ink-muted)", whiteSpace: "nowrap" }}>
+                          <td
+                            data-label="Created"
+                            className="num"
+                            style={{ color: "var(--ink-muted)", whiteSpace: "nowrap" }}
+                          >
                             {formatShortDate(inv.createdAt)}
                           </td>
-                          <td style={{ textAlign: "right" }}>
+                          <td className="dash-table__action-cell">
                             <Link
                               href={`/workspace?id=${encodeURIComponent(inv.id)}`}
                               className="dash-open-link"
@@ -790,6 +809,85 @@ export function DashboardApp() {
           </section>
         </ScrollReveal>
       </main>
+
+      <ModalDialog
+        open={mobileNavOpen}
+        title="Navigation"
+        onClose={() => setMobileNavOpen(false)}
+      >
+        <div className="dash-mobile-drawer">
+          <div className="dash-mobile-group">
+            <div className="dash-mobile-group__label">Account</div>
+            <div className="dash-mobile-user">
+              <span className="ws-user-avatar" aria-hidden="true">
+                {userInitial}
+              </span>
+              <div className="dash-mobile-user__meta">
+                <strong>{displayName}</strong>
+                <span>{user.email}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="dash-mobile-group">
+            <div className="dash-mobile-group__label">Workspace</div>
+            <div className="dash-mobile-list">
+              <Link
+                href="/workspace"
+                className="dash-mobile-link"
+                onClick={() => setMobileNavOpen(false)}
+              >
+                <Layers size={16} strokeWidth={1.5} aria-hidden="true" />
+                <span>Open workspace</span>
+              </Link>
+              <Link
+                href="/docs"
+                className="dash-mobile-link"
+                onClick={() => setMobileNavOpen(false)}
+              >
+                <BookOpen size={16} strokeWidth={1.5} aria-hidden="true" />
+                <span>API Docs</span>
+              </Link>
+              <button
+                type="button"
+                className="dash-mobile-link"
+                onClick={() => {
+                  setMobileNavOpen(false);
+                  setPaletteOpen(true);
+                }}
+              >
+                <Search size={16} strokeWidth={1.5} aria-hidden="true" />
+                <span>Quick search</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="dash-mobile-foot">
+            <Link
+              href="/workspace?new=1"
+              className="ws-btn ws-btn--primary"
+              style={{ width: "100%", height: 42, textDecoration: "none" }}
+              onClick={() => setMobileNavOpen(false)}
+            >
+              <Plus size={15} strokeWidth={1.75} aria-hidden="true" />
+              <span>New investigation</span>
+            </Link>
+
+            <button
+              type="button"
+              className="ws-btn"
+              style={{ width: "100%", justifyContent: "center" }}
+              onClick={() => {
+                setMobileNavOpen(false);
+                void handleSignOut();
+              }}
+            >
+              <LogOut size={16} strokeWidth={1.5} aria-hidden="true" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </ModalDialog>
 
       <CommandPalette
         open={paletteOpen}

@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, FolderGit2, LogIn, Search, TerminalSquare } from "lucide-react";
+import { ArrowRight, ChevronDown, FolderGit2, List, LogIn, Search, TerminalSquare } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { CodeBlockTabs } from "@/components/ui/code-block-tabs";
 import {
@@ -573,6 +573,7 @@ export function DocsPageClient({
   const [specVersion, setSpecVersion] = React.useState("0.1.0");
   const [loadingSpec, setLoadingSpec] = React.useState(true);
   const [paletteOpen, setPaletteOpen] = React.useState(false);
+  const [mobileRailOpen, setMobileRailOpen] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -711,28 +712,56 @@ export function DocsPageClient({
       </header>
 
       <div className="docs-layout">
-        <nav className="docs-rail" aria-label="API endpoints">
-          {groups.map((group) => {
-            const items = visibleEndpoints.filter((ep) => ep.group === group);
-            if (items.length === 0) return null;
-            return (
-              <div key={group} className="docs-rail__group">
-                <div className="docs-rail__title">{group}</div>
-                {items.map((ep) => (
-                  <a key={ep.id} href={`#${ep.id}`} className="docs-rail__item">
-                    <span
-                      className={`docs-method docs-method--sm ${
-                        ep.method === "POST" ? "docs-method--post" : "docs-method--get"
-                      }`}
+        <nav
+          className={`docs-rail ${mobileRailOpen ? "is-open" : ""}`}
+          aria-label="API endpoints"
+        >
+          <button
+            type="button"
+            className="docs-rail-toggle"
+            aria-expanded={mobileRailOpen}
+            aria-controls="docs-rail-groups"
+            onClick={() => setMobileRailOpen((prev) => !prev)}
+          >
+            <span className="docs-rail-toggle__left">
+              <List size={15} strokeWidth={1.75} aria-hidden="true" />
+              <span>Browse endpoints ({visibleEndpoints.length})</span>
+            </span>
+            <ChevronDown
+              size={15}
+              strokeWidth={1.75}
+              className={mobileRailOpen ? "is-open" : undefined}
+              aria-hidden="true"
+            />
+          </button>
+          <div id="docs-rail-groups" className="docs-rail__groups">
+            {groups.map((group) => {
+              const items = visibleEndpoints.filter((ep) => ep.group === group);
+              if (items.length === 0) return null;
+              return (
+                <div key={group} className="docs-rail__group">
+                  <div className="docs-rail__title">{group}</div>
+                  {items.map((ep) => (
+                    <a
+                      key={ep.id}
+                      href={`#${ep.id}`}
+                      className="docs-rail__item"
+                      onClick={() => setMobileRailOpen(false)}
                     >
-                      {ep.method}
-                    </span>
-                    <span className="docs-rail__path">{ep.path}</span>
-                  </a>
-                ))}
-              </div>
-            );
-          })}
+                      <span
+                        className={`docs-method docs-method--sm ${
+                          ep.method === "POST" ? "docs-method--post" : "docs-method--get"
+                        }`}
+                      >
+                        {ep.method}
+                      </span>
+                      <span className="docs-rail__path">{ep.path}</span>
+                    </a>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
         </nav>
 
         <main id="main-content" className="docs-main">

@@ -959,8 +959,7 @@ export function InvestigationDetail({
                 <input
                   type="search"
                   aria-label="Filter repository paths"
-                  className="ps-input"
-                  style={{ width: 240, minHeight: 32 }}
+                  className="ps-input ws-file-filter"
                   placeholder="Filter file paths…"
                   value={fileQuery}
                   onChange={(e) => setFileQuery(e.target.value)}
@@ -1020,7 +1019,7 @@ export function InvestigationDetail({
             </div>
 
             <div className="ws-remedy-controls">
-              <div className="ps-field" style={{ flex: "1 1 280px" }}>
+              <div className="ps-field ws-remedy-hint">
                 <label htmlFor="remedy-hint">Optional maintainer guidance</label>
                 <input
                   id="remedy-hint"
@@ -1032,7 +1031,7 @@ export function InvestigationDetail({
                 />
               </div>
 
-              <div className="ps-field" style={{ width: 140 }}>
+              <div className="ps-field ws-remedy-attempts">
                 <label htmlFor="remedy-attempts">Max retries</label>
                 <select
                   id="remedy-attempts"
@@ -1048,8 +1047,7 @@ export function InvestigationDetail({
 
               <button
                 type="button"
-                className="ws-btn ws-btn--primary"
-                style={{ alignSelf: "end", height: 40 }}
+                className="ws-btn ws-btn--primary ws-remedy-submit"
                 disabled={busyAction !== null}
                 onClick={handleRemediate}
               >
@@ -1899,7 +1897,7 @@ export function InvestigationDetail({
             />
           ) : null}
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <div className="ws-modal-actions">
             <button
               type="button"
               className="ws-btn"

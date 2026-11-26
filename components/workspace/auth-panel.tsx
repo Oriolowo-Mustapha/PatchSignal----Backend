@@ -120,13 +120,13 @@ export function AuthPanel({
           </div>
 
           <nav className="auth-topbar__right" aria-label="Authentication navigation">
-            <Link href="/" className="auth-top-link">
+            <Link href="/" className="auth-top-link auth-top-link--secondary">
               Home
             </Link>
             <Link href="/dashboard" className="auth-top-link">
               Dashboard
             </Link>
-            <Link href="/docs" className="auth-top-link">
+            <Link href="/docs" className="auth-top-link auth-top-link--secondary">
               API Docs
             </Link>
             {asLinks ? (

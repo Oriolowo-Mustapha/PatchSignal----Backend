@@ -177,6 +177,7 @@ html {
   text-size-adjust: 100%;
   scrollbar-color: #2a3442 #080b0f;
   scrollbar-width: auto;
+  overflow-x: clip;
 }
 
 body {
@@ -185,6 +186,7 @@ body {
   color: var(--ink-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
 }
 
 ::selection {
@@ -402,6 +404,21 @@ dialog.ps-dialog::backdrop {
   padding: 20px;
 }
 
+@media (max-width: 600px) {
+  dialog.ps-dialog:modal {
+    width: calc(100vw - 20px);
+    max-width: calc(100vw - 20px);
+    max-height: 90dvh;
+    border-radius: 12px;
+  }
+  .ps-dialog__head {
+    padding: 12px 14px;
+  }
+  .ps-dialog__body {
+    padding: 14px;
+  }
+}
+
 /* Form validation after interaction (:user-invalid + fallback) */
 .ps-field {
   display: grid;
@@ -493,7 +510,9 @@ dialog.ps-dialog::backdrop {
 [data-ui="terminal"] .ps-terminal__header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
+  row-gap: 6px;
   min-height: 40px;
   padding: 6px 12px;
   background: var(--term-header);
@@ -505,7 +524,7 @@ dialog.ps-dialog::backdrop {
   align-items: baseline;
   gap: 8px;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 160px;
   font-size: 13px;
   font-weight: 500;
 }
@@ -1254,6 +1273,23 @@ dialog.ps-cmd-dialog::backdrop {
   gap: 6px;
 }
 
+@media (max-width: 560px) {
+  dialog.ps-cmd-dialog:modal {
+    margin: 16px auto auto;
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 32px);
+  }
+  .ps-cmd-foot {
+    display: none;
+  }
+}
+
+@media (max-width: 440px) {
+  [data-ui="password-strength"] .ps-pw-criteria {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* DiffViewer ([data-ui="diff-viewer"]) */
 [data-ui="diff-viewer"].ps-diff {
   border: 1px solid var(--border-strong);
@@ -1524,6 +1560,19 @@ dialog.ps-cmd-dialog::backdrop {
   }
 }
 
+@media (max-width: 560px) {
+  .ps-diff__meta {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .ps-diff__row {
+    grid-template-columns: 28px 28px 14px minmax(0, 1fr);
+  }
+  .ps-diff__ln {
+    padding: 2px 4px;
+  }
+}
+
 /* SlidingTabs ([data-ui="sliding-tabs"]) */
 [data-ui="sliding-tabs"].ps-sliding-tabs {
   position: relative;
@@ -1531,6 +1580,7 @@ dialog.ps-cmd-dialog::backdrop {
   align-items: center;
   max-width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
 
@@ -1798,6 +1848,7 @@ dialog.ps-cmd-dialog::backdrop {
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   padding: 12px 14px;
   border: 1px solid var(--border-hairline);
@@ -2315,6 +2366,7 @@ button:hover .ps-brand-mark.is-animated .ps-brand-mark__pulse {
 .ps-skel-stack {
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 
 .ps-skel-card {
@@ -2324,6 +2376,7 @@ button:hover .ps-brand-mark.is-animated .ps-brand-mark__pulse {
   border: 1px solid var(--border-hairline);
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .ps-skel-row {
@@ -2339,6 +2392,7 @@ button:hover .ps-brand-mark.is-animated .ps-brand-mark__pulse {
   display: flex;
   flex-direction: column;
   background: var(--bg-canvas);
+  overflow-x: clip;
 }
 
 .ps-skel-ws__bar {
@@ -2356,6 +2410,7 @@ button:hover .ps-brand-mark.is-animated .ps-brand-mark__pulse {
   flex: 1;
   display: grid;
   grid-template-columns: 272px minmax(0, 1fr);
+  min-width: 0;
 }
 
 .ps-skel-ws__rail {
@@ -2371,6 +2426,7 @@ button:hover .ps-brand-mark.is-animated .ps-brand-mark__pulse {
   padding: 24px clamp(16px, 3vw, 32px);
   max-width: 1120px;
   width: 100%;
+  min-width: 0;
   margin: 0 auto;
 }
 
@@ -2397,6 +2453,15 @@ button:hover .ps-brand-mark.is-animated .ps-brand-mark__pulse {
 }
 
 @media (max-width: 960px) {
+  .ps-skel-ws__grid {
+    grid-template-columns: 1fr;
+  }
+  .ps-skel-ws__rail {
+    display: none;
+  }
+  .ps-skel-ws__main {
+    padding: 20px 16px 36px;
+  }
   .ps-skel-dash__kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

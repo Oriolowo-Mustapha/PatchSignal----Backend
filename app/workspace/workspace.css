@@ -426,6 +426,34 @@
   }
 }
 
+@media (max-width: 640px) {
+  .auth-topbar {
+    height: auto;
+    min-height: 54px;
+    padding: 8px 14px;
+  }
+  .auth-top-link--secondary {
+    display: none;
+  }
+  .auth-vault__stage {
+    padding: 16px 12px 28px;
+    align-items: flex-start;
+  }
+  .auth-chamber {
+    padding: 18px 16px;
+  }
+  .auth-chamber-frame .ps-crosshair {
+    display: none;
+  }
+  .auth-title {
+    font-size: 22px;
+  }
+  .auth-snapshot__row,
+  .auth-ledger__foot {
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 480px) {
   .auth-topbar__right {
     gap: 10px;
@@ -452,6 +480,7 @@
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
+  overflow-x: clip;
 }
 
 .ws-topbar {
@@ -865,6 +894,46 @@
   padding: 4px 0;
 }
 
+.ws-drawer-rail .ws-rail__link {
+  min-height: 40px;
+}
+
+.ws-drawer-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-hairline);
+}
+
+.ws-drawer-user__meta {
+  display: grid;
+  min-width: 0;
+}
+
+.ws-drawer-user__meta strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-drawer-user__meta span {
+  font-size: 12px;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-detail {
+  min-width: 0;
+}
+
 /* ==========================================================================
    3. Studio 2-Column Intake Composer & Detail Workbench
    ========================================================================== */
@@ -1050,7 +1119,7 @@
 
 .ws-title-main {
   min-width: 0;
-  flex: 1 1 320px;
+  flex: 1 1 220px;
 }
 
 .ws-title-badges {
@@ -1209,6 +1278,7 @@
 .ws-panel-inner {
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 
 /* Responsive accessible table */
@@ -1360,11 +1430,38 @@
 }
 
 /* Automated Remediation Loop & PR Permission Controls */
+.ws-file-filter {
+  width: 240px;
+  max-width: 100%;
+  min-height: 32px;
+}
+
 .ws-remedy-controls {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
   align-items: flex-end;
+}
+
+.ws-remedy-hint {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.ws-remedy-attempts {
+  width: 140px;
+}
+
+.ws-remedy-submit {
+  align-self: flex-end;
+  height: 40px;
+}
+
+.ws-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .ws-pr-card {
@@ -1466,12 +1563,13 @@
   display: grid;
   gap: 4px;
   min-width: 0;
-  flex: 1 1 320px;
+  flex: 1 1 220px;
 }
 
 .ws-pr-banner__title {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   font-size: 15px;
   font-weight: 500;
@@ -1608,6 +1706,51 @@
   }
   .ws-intake-aside {
     position: static;
+  }
+}
+
+@media (max-width: 760px) {
+  .ws-kbd--on-lime {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .ws-title-actions {
+    width: 100%;
+  }
+  .ws-title-actions > button {
+    flex: 1 1 130px;
+  }
+  .ws-file-filter,
+  .ws-remedy-attempts,
+  .ws-remedy-submit {
+    width: 100%;
+  }
+  .ws-panel,
+  .ws-intake-card,
+  .ws-diag-card {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 520px) {
+  .ws-ci-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .ws-ci-row__name {
+    white-space: normal;
+  }
+}
+
+@media (max-width: 480px) {
+  .ws-topbar {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  .ws-brand {
+    font-size: 14px;
   }
 }
 

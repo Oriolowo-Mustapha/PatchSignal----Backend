@@ -455,6 +455,15 @@ export function WorkspaceApp() {
 
       {inDrawer ? (
         <div className="ws-rail__foot">
+          <div className="ws-drawer-user">
+            <span className="ws-user-avatar" aria-hidden="true">
+              {userInitial}
+            </span>
+            <div className="ws-drawer-user__meta">
+              <strong>{displayName}</strong>
+              <span>{user.email}</span>
+            </div>
+          </div>
           <Link href="/dashboard" className="ws-rail__link">
             <Layers size={16} strokeWidth={1.5} aria-hidden="true" />
             <span>Dashboard</span>
