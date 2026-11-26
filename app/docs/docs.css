@@ -285,6 +285,11 @@
   max-width: 100%;
   overflow: hidden;
   scroll-margin-top: 84px;
+  transition: border-color 180ms var(--ease-out), transform 180ms var(--ease-out);
+}
+
+.docs-card:hover {
+  border-color: var(--border-strong);
 }
 
 .docs-card > * {

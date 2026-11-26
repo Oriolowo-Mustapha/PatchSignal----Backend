@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist_Mono, Mona_Sans } from "next/font/google";
 import "./globals.css";
 
@@ -16,10 +16,18 @@ const geistMono = Geist_Mono({
   display: "swap",
 });
 
+export const viewport: Viewport = {
+  themeColor: "#080b0f",
+};
+
 export const metadata: Metadata = {
   title: "PatchSignal: Automated bug reproduction & verification",
   description:
     "Turn GitHub bug reports and screenshots into verified test reproductions and review-ready issue briefs.",
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    shortcut: ["/icon.svg"],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

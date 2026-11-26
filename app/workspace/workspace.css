@@ -359,11 +359,11 @@
 }
 
 .auth-snapshot__status.is-fail {
-  color: var(--pill-neg-ink);
+  color: var(--error-inline-ink);
 }
 
 .auth-snapshot__status.is-ok {
-  color: var(--pill-pos-ink);
+  color: var(--positive);
 }
 
 .auth-highlights {
@@ -1004,10 +1004,10 @@
   align-items: center;
   gap: 6px;
   height: 22px;
-  padding: 0 8px;
+  padding: 0 10px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   background: var(--pill-neutral-bg);
   color: var(--pill-neutral-ink);
   border: 1px solid var(--pill-neutral-border);
@@ -1310,15 +1310,17 @@
 }
 
 .ws-notice--warn {
-  background: var(--pill-warn-bg);
-  color: var(--pill-warn-ink);
-  border-color: var(--pill-warn-border);
+  background: var(--alert-warn-bg);
+  color: var(--alert-warn-ink);
+  border-color: var(--alert-warn-border);
+  font-weight: 500;
 }
 
 .ws-notice--neg {
-  background: var(--pill-neg-bg);
-  color: var(--pill-neg-ink);
-  border-color: var(--pill-neg-border);
+  background: var(--alert-error-bg);
+  color: var(--alert-error-ink);
+  border-color: var(--alert-error-border);
+  font-weight: 500;
 }
 
 .ws-code-block {
@@ -1363,6 +1365,83 @@
   flex-wrap: wrap;
   gap: 12px;
   align-items: flex-end;
+}
+
+.ws-pr-card {
+  display: grid;
+  gap: 14px;
+}
+
+.ws-pr-card.is-ci-passed {
+  border-color: var(--lime);
+  background: var(--bg-raised);
+}
+
+.ws-pr-card.is-ci-failed {
+  border-color: var(--alert-error-border);
+  background: var(--bg-raised);
+}
+
+.ws-pr-card.is-created {
+  border-color: var(--border-strong);
+  background: var(--bg-raised);
+}
+
+.ws-pr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ws-ci-checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.ws-ci-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-hairline);
+}
+
+.ws-ci-row__name {
+  font-size: 13px;
+  color: var(--ink-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-ci-row__right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.ws-ci-row__link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--ink-secondary);
+}
+
+.ws-ci-row__link:hover {
+  color: var(--ink-primary);
+  background: var(--bg-elevated);
 }
 
 .ws-pr-banner {
@@ -1492,7 +1571,7 @@
 }
 
 .ps-field-status.is-err {
-  color: var(--pill-neg-ink);
+  color: var(--error-inline-ink);
 }
 
 .ps-field-status.is-ok {
@@ -1530,4 +1609,56 @@
   .ws-intake-aside {
     position: static;
   }
+}
+
+/* Readable Root-Cause Diagnosis & Proposed Fix Cards */
+.ws-diag-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.ws-diag-card {
+  padding: 18px 20px;
+  border-radius: 10px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-hairline);
+  display: grid;
+  gap: 12px;
+}
+
+.ws-diag-card--fix {
+  background: var(--bg-raised);
+  border-color: var(--lime-border);
+}
+
+.ws-diag-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ws-diag-card__meta {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.ws-diag-files {
+  margin: 4px 0 0;
+  padding: 12px 0 0;
+  list-style: none;
+  border-top: 1px solid var(--border-hairline);
+  display: grid;
+  gap: 8px;
+}
+
+.ws-diag-file-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-secondary);
 }

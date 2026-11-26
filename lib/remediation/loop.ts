@@ -80,7 +80,18 @@ function buildPullRequestDraft(
 
 export async function runRemediationLoop(
   investigationId: string,
-  options: { maxAttempts?: number; customInstruction?: string } = {}
+  options: {
+    maxAttempts?: number;
+    customInstruction?: string;
+    seedFailure?: {
+      command: string;
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      patches: RemediationIteration["patches"];
+    } | null;
+    preserveExistingPr?: PullRequestState | null;
+  } = {}
 ): Promise<RemediationData> {
   const maxAttempts = Math.min(Math.max(options.maxAttempts ?? 3, 1), 5);
   const inv = (await getInvestigation(investigationId)) as unknown as {
@@ -123,6 +134,7 @@ export async function runRemediationLoop(
     currentAttempt: 0,
     patches: [],
     iterations: [],
+    ...(options.preserveExistingPr ? { pr: options.preserveExistingPr } : {}),
     updatedAt: new Date().toISOString(),
   };
 
@@ -137,7 +149,7 @@ export async function runRemediationLoop(
     stdout: string;
     stderr: string;
     patches: RemediationIteration["patches"];
-  } | null = null;
+  } | null = options.seedFailure ?? null;
 
   try {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -203,18 +215,22 @@ export async function runRemediationLoop(
 
       if (verifyRes.outcome === "passed" && verifyRes.exitCode === 0) {
         remediation.status = "succeeded";
-        const prDraft = buildPullRequestDraft(
-          inv.owner,
-          inv.repo,
-          investigationId,
-          proposed.diagnosis,
-          proposed.fixSummary,
-          iteration
-        );
-        if (typeof inspection.defaultBranch === "string" && inspection.defaultBranch) {
-          prDraft.baseBranch = inspection.defaultBranch;
+        if (options.preserveExistingPr) {
+          remediation.pr = options.preserveExistingPr;
+        } else {
+          const prDraft = buildPullRequestDraft(
+            inv.owner,
+            inv.repo,
+            investigationId,
+            proposed.diagnosis,
+            proposed.fixSummary,
+            iteration
+          );
+          if (typeof inspection.defaultBranch === "string" && inspection.defaultBranch) {
+            prDraft.baseBranch = inspection.defaultBranch;
+          }
+          remediation.pr = prDraft;
         }
-        remediation.pr = prDraft;
         await persistRemediation(investigationId, inspection, remediation, { stage: "ran" });
 
         // Persist Hypothesis, Run & Classification cleanly inside existing tables

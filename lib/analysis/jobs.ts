@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
+import { withDbRetry } from "@/lib/db/retry";
 import { memoryStore, useMemoryStore } from "@/lib/store";
 import type { z } from "zod";
 import type { recordEvidenceSchema } from "@/lib/evidence/schema";
@@ -88,17 +89,24 @@ export async function claim(): Promise<Claim | null> {
     }
     return null;
   }
-  await prisma.analysisJob.updateMany({
-    where: { status: "running", leaseExpiresAt: { lte: now }, attempts: { gte: 3 } },
-    data: {
-      status: "failed",
-      error: "Worker stopped repeatedly. Retry analysis explicitly.",
-      leaseToken: null,
-      leaseExpiresAt: null,
-    },
-  });
+  await withDbRetry(
+    () =>
+      prisma.analysisJob.updateMany({
+        where: { status: "running", leaseExpiresAt: { lte: now }, attempts: { gte: 3 } },
+        data: {
+          status: "failed",
+          error: "Worker stopped repeatedly. Retry analysis explicitly.",
+          leaseToken: null,
+          leaseExpiresAt: null,
+        },
+      }),
+    1
+  );
   const eligible = { attempts: { lt: 3 }, OR: [{ status: "queued" }, { status: "running", leaseExpiresAt: { lte: now } }] };
-  const candidate = await prisma.analysisJob.findFirst({ where: eligible, orderBy: { createdAt: "asc" } });
+  const candidate = await withDbRetry(
+    () => prisma.analysisJob.findFirst({ where: eligible, orderBy: { createdAt: "asc" } }),
+    1
+  );
   if (!candidate) return null;
   const claimed = await prisma.analysisJob.updateMany({
     where: { id: candidate.id, ...eligible },

@@ -22,17 +22,36 @@ export type RemediationIteration = {
   patches: FilePatch[];
 };
 
+export type CiCheckItem = {
+  id: number;
+  name: string;
+  status: "queued" | "in_progress" | "completed" | "pending" | "waiting" | "requested";
+  conclusion: string | null;
+  htmlUrl?: string;
+  summary?: string;
+  failureSnippet?: string;
+};
+
+export type CiOverallStatus = "unknown" | "pending" | "passed" | "failed";
+
 export type PullRequestState = {
   status: "awaiting_approval" | "created" | "failed";
   title: string;
   body: string;
   branchName: string;
   baseBranch: string;
+  draft?: boolean;
+  readyForReview?: boolean;
   prUrl?: string;
   prNumber?: number;
   headSha?: string;
   forkOwner?: string;
   createdAt?: string;
+  ciStatus?: CiOverallStatus;
+  ciCheckedAt?: string;
+  ciChecks?: CiCheckItem[];
+  ciFailureLog?: string;
+  ciRepairRounds?: number;
   error?: string;
 };
 

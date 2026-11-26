@@ -21,8 +21,12 @@ import {
   type PackageResult,
   type RemediationData,
 } from "@/lib/ui/api-client";
+import { AlertBanner } from "@/components/ui/alert-banner";
+import type { ErrorContext } from "@/lib/ui/error-messages";
 import { CodeBlockTabs } from "@/components/ui/code-block-tabs";
 import { DiffViewer, diffText } from "@/components/ui/diff-viewer";
+import { FormattedProse } from "@/components/ui/formatted-prose";
+import { ActivityBar, Spinner } from "@/components/ui/loaders";
 import { ModalDialog } from "@/components/ui/modal-dialog";
 import { PipelineStepper } from "@/components/ui/pipeline-stepper";
 import { SlidingTabs } from "@/components/ui/sliding-tabs";
@@ -163,7 +167,7 @@ function provenancePillClass(prov: string) {
 
 type InvestigationDetailProps = {
   investigation: InvestigationDetailRecord;
-  onRefresh: () => Promise<void>;
+  onRefresh: (options?: { detailOnly?: boolean }) => Promise<void>;
   onAuthExpired: () => void;
 };
 
@@ -176,6 +180,7 @@ export function InvestigationDetail({
   const [artifactView, setArtifactView] = React.useState<"code" | "diff">("code");
   const [busyAction, setBusyAction] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
+  const [actionErrorContext, setActionErrorContext] = React.useState<ErrorContext>("workspace");
   const [copiedSha, setCopiedSha] = React.useState(false);
   const [expandedReport, setExpandedReport] = React.useState(false);
 
@@ -192,6 +197,7 @@ export function InvestigationDetail({
   const [prTitleInput, setPrTitleInput] = React.useState("");
   const [prBodyInput, setPrBodyInput] = React.useState("");
   const [prBranchInput, setPrBranchInput] = React.useState("");
+  const [prDraftInput, setPrDraftInput] = React.useState(true);
   const [prTokenInput, setPrTokenInput] = React.useState("");
   const [showPrTokenInput, setShowPrTokenInput] = React.useState(false);
   const [prError, setPrError] = React.useState<string | null>(null);
@@ -232,6 +238,7 @@ export function InvestigationDetail({
   React.useEffect(() => {
     setExpandedReport(false);
     setActionError(null);
+    setActionErrorContext("workspace");
     setPkgData(null);
     setEditableMarkdown("");
     setHypStatement("");
@@ -244,24 +251,48 @@ export function InvestigationDetail({
     setShowPrTokenInput(false);
   }, [investigation.id]);
 
-  // Poll analysis job every 4s while queued/running
+  // Sequential non-overlapping polling while analysis job is queued/running
   const jobStatus = investigation.analysisJob?.status;
   React.useEffect(() => {
     if (jobStatus !== "queued" && jobStatus !== "running") return;
-    const timer = window.setInterval(() => {
-      void onRefresh();
-    }, 4000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timerId: number | undefined;
+    const schedule = () => {
+      timerId = window.setTimeout(async () => {
+        if (cancelled) return;
+        if (typeof document === "undefined" || !document.hidden) {
+          await onRefresh({ detailOnly: true });
+        }
+        if (!cancelled) schedule();
+      }, 5000);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timerId !== undefined) window.clearTimeout(timerId);
+    };
   }, [investigation.id, jobStatus, onRefresh]);
 
-  // Poll remediation loop every 2.5s while running live attempts
+  // Sequential non-overlapping polling while remediation loop is running live attempts
   const remStatus = remediation?.status;
   React.useEffect(() => {
     if (remStatus !== "running" && busyAction !== "remediate") return;
-    const timer = window.setInterval(() => {
-      void onRefresh();
-    }, 2500);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timerId: number | undefined;
+    const schedule = () => {
+      timerId = window.setTimeout(async () => {
+        if (cancelled) return;
+        if (typeof document === "undefined" || !document.hidden) {
+          await onRefresh({ detailOnly: true });
+        }
+        if (!cancelled) schedule();
+      }, 4000);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timerId !== undefined) window.clearTimeout(timerId);
+    };
   }, [investigation.id, remStatus, busyAction, onRefresh]);
 
   React.useEffect(() => {
@@ -291,12 +322,53 @@ export function InvestigationDetail({
     setPrTitleInput(remediation?.pr?.title || `fix: resolve issue in ${investigation.owner}/${investigation.repo}`);
     setPrBodyInput(remediation?.pr?.body || "");
     setPrBranchInput(remediation?.pr?.branchName || `patchsignal/fix-${investigation.id.slice(0, 8)}`);
+    setPrDraftInput(remediation?.pr?.draft ?? true);
     setPrError(null);
     setPrModalOpen(true);
   };
 
-  const runAction = async (label: string, fn: () => Promise<void>) => {
+  // Poll GitHub Actions check runs every 12s while PR checks are pending
+  const createdPrStatus = remediation?.pr?.status;
+  const createdPrSha = remediation?.pr?.headSha;
+  const createdPrCiStatus = remediation?.pr?.ciStatus;
+  React.useEffect(() => {
+    if (
+      createdPrStatus !== "created" ||
+      !createdPrSha ||
+      (createdPrCiStatus && createdPrCiStatus !== "pending" && createdPrCiStatus !== "unknown")
+    ) {
+      return;
+    }
+    let cancelled = false;
+    let timerId: number | undefined;
+    const poll = async (delay: number) => {
+      timerId = window.setTimeout(async () => {
+        if (cancelled) return;
+        if (typeof document === "undefined" || !document.hidden) {
+          try {
+            await apiClient.getPrChecks(investigation.id);
+            await onRefresh({ detailOnly: true });
+          } catch {
+            // Keep polling quietly on transient network hiccups
+          }
+        }
+        if (!cancelled) void poll(12_000);
+      }, delay);
+    };
+    void poll(4_000);
+    return () => {
+      cancelled = true;
+      if (timerId !== undefined) window.clearTimeout(timerId);
+    };
+  }, [investigation.id, createdPrStatus, createdPrSha, createdPrCiStatus, onRefresh]);
+
+  const runAction = async (
+    label: string,
+    fn: () => Promise<void>,
+    context: ErrorContext = "workspace"
+  ) => {
     setActionError(null);
+    setActionErrorContext(context);
     setBusyAction(label);
     try {
       await fn();
@@ -306,17 +378,25 @@ export function InvestigationDetail({
         onAuthExpired();
         return;
       }
-      setActionError(err instanceof Error ? err.message : `${label} failed`);
+      setActionError(
+        err instanceof Error
+          ? err.message
+          : "We couldn't complete that action. Please try again."
+      );
     } finally {
       setBusyAction(null);
     }
   };
 
   const handleAnalyze = () =>
-    runAction("analyze", async () => {
-      await apiClient.analyze(investigation.id);
-      setActiveTab("evidence");
-    });
+    runAction(
+      "analyze",
+      async () => {
+        await apiClient.analyze(investigation.id);
+        setActiveTab("evidence");
+      },
+      "analysis"
+    );
 
   const handleInspect = () =>
     runAction("inspect", async () => {
@@ -325,14 +405,18 @@ export function InvestigationDetail({
     });
 
   const handleRemediate = () =>
-    runAction("remediate", async () => {
-      setActiveTab("fix");
-      setSelectedPatchIndex(0);
-      await apiClient.remediate(investigation.id, {
-        maxAttempts: remedyAttempts,
-        customInstruction: remedyHint.trim() || undefined,
-      });
-    });
+    runAction(
+      "remediate",
+      async () => {
+        setActiveTab("fix");
+        setSelectedPatchIndex(0);
+        await apiClient.remediate(investigation.id, {
+          maxAttempts: remedyAttempts,
+          customInstruction: remedyHint.trim() || undefined,
+        });
+      },
+      "remediation"
+    );
 
   const handleConfirmCreatePr = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -345,6 +429,7 @@ export function InvestigationDetail({
         body: prBodyInput.trim(),
         branchName: prBranchInput.trim(),
         baseBranch: inspection?.defaultBranch || remediation?.pr?.baseBranch || "main",
+        draft: prDraftInput,
         githubToken: prTokenInput.trim() || undefined,
       });
       await onRefresh();
@@ -358,7 +443,54 @@ export function InvestigationDetail({
       if (err instanceof ApiRequestError && err.code === "GITHUB_WRITE_TOKEN_NEEDED") {
         setShowPrTokenInput(true);
       }
-      setPrError(err instanceof Error ? err.message : "Failed to create Pull Request");
+      setPrError(
+        err instanceof Error
+          ? err.message
+          : "We couldn't create the Pull Request right now. Please try again."
+      );
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleRefreshPrChecks = () =>
+    runAction(
+      "checks",
+      async () => {
+        await apiClient.getPrChecks(investigation.id);
+      },
+      "pr"
+    );
+
+  const handleMarkPrReady = () =>
+    runAction(
+      "markReady",
+      async () => {
+        await apiClient.markPrReady(investigation.id);
+      },
+      "pr"
+    );
+
+  const handleRepairPrCi = () =>
+    runAction(
+      "repairCi",
+      async () => {
+        setActiveTab("fix");
+        setSelectedPatchIndex(0);
+        await apiClient.repairPrCi(investigation.id, {
+          approved: true,
+          pushToPr: true,
+          maxAttempts: remedyAttempts,
+          customInstruction: remedyHint.trim() || undefined,
+        });
+      },
+      "remediation"
+    );
+
+  const handleManualRefresh = async () => {
+    setBusyAction("refresh");
+    try {
+      await onRefresh();
     } finally {
       setBusyAction(null);
     }
@@ -524,12 +656,17 @@ export function InvestigationDetail({
           <button
             type="button"
             className="ws-btn"
-            onClick={() => void onRefresh()}
+            onClick={() => void handleManualRefresh()}
             disabled={busyAction !== null}
             aria-label="Refresh investigation"
           >
-            <RefreshCw size={15} strokeWidth={1.5} aria-hidden="true" />
-            <span>Refresh</span>
+            <RefreshCw
+              size={15}
+              strokeWidth={1.5}
+              className={busyAction === "refresh" ? "ps-icon-spin" : undefined}
+              aria-hidden="true"
+            />
+            <span>{busyAction === "refresh" ? "Refreshing…" : "Refresh"}</span>
           </button>
           <button
             type="button"
@@ -537,7 +674,8 @@ export function InvestigationDetail({
             disabled={nextAct.disabled}
             onClick={nextAct.onClick}
           >
-            {nextAct.label}
+            {busyAction && busyAction !== "refresh" ? <Spinner size={14} /> : null}
+            <span>{nextAct.label}</span>
           </button>
         </div>
       </div>
@@ -554,9 +692,14 @@ export function InvestigationDetail({
         />
       </div>
 
-      {actionError ? (
-        <div className="ws-notice ws-notice--neg" role="alert" style={{ marginBottom: 16 }}>
-          {actionError}
+      {actionError && !(activeTab === "fix" && remediation?.error === actionError) ? (
+        <div style={{ marginBottom: 16 }}>
+          <AlertBanner
+            variant="error"
+            context={actionErrorContext}
+            message={actionError}
+            onDismiss={() => setActionError(null)}
+          />
         </div>
       ) : null}
 
@@ -583,7 +726,7 @@ export function InvestigationDetail({
         tabIndex={activeTab === "evidence" ? 0 : undefined}
         {...(activeTab !== "evidence" ? ({ hidden: "until-found" } as Record<string, string>) : {})}
       >
-        <div className="ws-panel-inner">
+        <div className="ws-panel-inner ps-panel-enter">
           <div className="ws-panel">
             <div className="ws-panel__head">
               <h2 className="ws-panel__title">Automated analysis</h2>
@@ -614,18 +757,37 @@ export function InvestigationDetail({
                   }
                   onClick={handleAnalyze}
                 >
-                  {jobStatus === "failed" ? "Retry analysis" : "Run analysis"}
+                  {busyAction === "analyze" || jobStatus === "queued" || jobStatus === "running" ? (
+                    <Spinner size={14} />
+                  ) : null}
+                  <span>
+                    {busyAction === "analyze"
+                      ? "Queueing…"
+                      : jobStatus === "queued" || jobStatus === "running"
+                        ? "Analyzing…"
+                        : jobStatus === "failed"
+                          ? "Retry analysis"
+                          : "Run analysis"}
+                  </span>
                 </button>
               </div>
             </div>
 
             {investigation.analysisJob?.status === "failed" && investigation.analysisJob.error ? (
-              <div className="ws-notice ws-notice--neg" role="alert">
-                {investigation.analysisJob.error}
-              </div>
+              <AlertBanner
+                variant="error"
+                context="analysis"
+                message={investigation.analysisJob.error}
+              />
             ) : jobStatus === "queued" || jobStatus === "running" ? (
-              <div className="ws-notice">
-                Analysis is {jobStatus}. Checking every 4 seconds until structured evidence commits.
+              <div className="ws-notice" style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Spinner size={14} />
+                  <span>
+                    Your report is being analyzed. This page will update automatically as soon as results are ready.
+                  </span>
+                </div>
+                <ActivityBar label="Automated evidence analysis running" />
               </div>
             ) : (
               <p style={{ fontSize: 13, color: "var(--app-muted)" }}>
@@ -739,7 +901,7 @@ export function InvestigationDetail({
         tabIndex={activeTab === "repository" ? 0 : undefined}
         {...(activeTab !== "repository" ? ({ hidden: "until-found" } as Record<string, string>) : {})}
       >
-        <div className="ws-panel-inner">
+        <div className="ws-panel-inner ps-panel-enter">
           <div className="ws-panel">
             <div className="ws-panel__head">
               <h2 className="ws-panel__title">Pinned repository inspection</h2>
@@ -749,14 +911,18 @@ export function InvestigationDetail({
                 disabled={busyAction !== null}
                 onClick={handleInspect}
               >
-                {busyAction === "inspect" ? "Inspecting…" : "Inspect repository"}
+                {busyAction === "inspect" ? <Spinner size={14} /> : null}
+                <span>{busyAction === "inspect" ? "Inspecting…" : "Inspect repository"}</span>
               </button>
             </div>
 
             {inspection?.ecosystem === "unsupported" ? (
-              <div className="ws-notice ws-notice--neg" style={{ marginBottom: 14 }}>
-                This repository returned no inspectable files. Verdict recorded as{" "}
-                <strong>Inconclusive</strong>.
+              <div style={{ marginBottom: 14 }}>
+                <AlertBanner
+                  variant="error"
+                  title="No readable project files found"
+                  message="We couldn't find supported source files to inspect in this repository, so the result was marked inconclusive."
+                />
               </div>
             ) : null}
 
@@ -818,14 +984,14 @@ export function InvestigationDetail({
         tabIndex={activeTab === "fix" ? 0 : undefined}
         {...(activeTab !== "fix" ? ({ hidden: "until-found" } as Record<string, string>) : {})}
       >
-        <div className="ws-panel-inner">
+        <div className="ws-panel-inner ps-panel-enter">
           {/* Launcher & Hint Controls */}
           <div className="ws-panel" style={{ display: "grid", gap: 14 }}>
             <div className="ws-panel__head" style={{ marginBottom: 0 }}>
               <div>
                 <h2 className="ws-panel__title">Automated diagnosis, fix & container verification loop</h2>
                 <p style={{ fontSize: 13, color: "var(--ink-secondary)", marginTop: 4 }}>
-                  Identifies the root cause, patches the affected files, and runs builds/tests in an isolated container or sandbox until exit 0.
+                  Finds the root cause, updates the affected files, and verifies the fix automatically until checks pass.
                 </p>
               </div>
               {remediation ? (
@@ -841,10 +1007,14 @@ export function InvestigationDetail({
                   }
                 >
                   {remediation.status === "running"
-                    ? `Running attempt ${remediation.currentAttempt}/${remediation.maxAttempts}`
+                    ? `Running attempt ${remediation.currentAttempt} of ${remediation.maxAttempts}`
                     : remediation.status === "succeeded"
-                      ? "Verified fix (exit 0)"
-                      : remediation.status}
+                      ? "Fix verified"
+                      : remediation.status === "failed"
+                        ? "Failed"
+                        : remediation.status === "exhausted"
+                          ? "Needs review"
+                          : "Idle"}
                 </span>
               ) : null}
             </div>
@@ -883,7 +1053,11 @@ export function InvestigationDetail({
                 disabled={busyAction !== null}
                 onClick={handleRemediate}
               >
-                <Play size={14} strokeWidth={1.75} aria-hidden="true" />
+                {busyAction === "remediate" || remediation?.status === "running" ? (
+                  <Spinner size={14} />
+                ) : (
+                  <Play size={14} strokeWidth={1.75} aria-hidden="true" />
+                )}
                 <span>
                   {busyAction === "remediate" || remediation?.status === "running"
                     ? "Running loop…"
@@ -894,35 +1068,195 @@ export function InvestigationDetail({
               </button>
             </div>
 
-            {remediation?.error ? (
-              <div className="ws-notice ws-notice--neg" role="alert">
-                {remediation.error}
+            {busyAction === "remediate" ||
+            busyAction === "repairCi" ||
+            remediation?.status === "running" ? (
+              <div className="ws-notice" style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Spinner size={14} />
+                  <span>
+                    {remediation?.currentAttempt
+                      ? `Building and testing a fix (attempt ${remediation.currentAttempt} of ${remediation.maxAttempts})…`
+                      : "Reviewing the issue and preparing a verified fix…"}
+                  </span>
+                </div>
+                <ActivityBar label="Automated remediation loop running" />
               </div>
+            ) : null}
+
+            {remediation?.error ? (
+              <AlertBanner
+                variant="error"
+                context="remediation"
+                message={remediation.error}
+              />
             ) : null}
           </div>
 
-          {/* Explicit Permission Card or Created PR Status */}
+          {/* Explicit Permission Card or Created PR Status + Live CI Accountability */}
           {remediation?.pr?.status === "created" && remediation.pr.prUrl ? (
-            <div className="ws-panel ws-pr-banner is-created">
-              <div className="ws-pr-banner__left">
-                <div className="ws-pr-banner__title">
-                  <GitPullRequest size={16} strokeWidth={1.75} aria-hidden="true" />
-                  <span>Pull Request #{remediation.pr.prNumber} created</span>
+            <div
+              className={`ws-panel ws-pr-card ${
+                remediation.pr.ciStatus === "failed"
+                  ? "is-ci-failed"
+                  : remediation.pr.ciStatus === "passed"
+                    ? "is-ci-passed"
+                    : "is-created"
+              }`}
+            >
+              <div className="ws-pr-banner">
+                <div className="ws-pr-banner__left">
+                  <div className="ws-pr-banner__title">
+                    <GitPullRequest size={16} strokeWidth={1.75} aria-hidden="true" />
+                    <span>Pull Request #{remediation.pr.prNumber}</span>
+                    {remediation.pr.draft ? <span className="ws-pill">Draft</span> : null}
+                    <span
+                      className={
+                        remediation.pr.ciStatus === "passed"
+                          ? "ws-pill ws-pill--pos"
+                          : remediation.pr.ciStatus === "failed"
+                            ? "ws-pill ws-pill--neg"
+                            : "ws-pill ws-pill--warn"
+                      }
+                    >
+                      {remediation.pr.ciStatus === "passed"
+                        ? "All CI checks passed"
+                        : remediation.pr.ciStatus === "failed"
+                          ? "CI checks failing"
+                          : "CI checks running"}
+                    </span>
+                    {(remediation.pr.ciRepairRounds ?? 0) > 0 ? (
+                      <span className="ws-pill num">
+                        {`CI repair round ${remediation.pr.ciRepairRounds}`}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="ws-pr-banner__sub">
+                    Branch <code className="mono">{remediation.pr.branchName}</code> targeting{" "}
+                    <code className="mono">{remediation.pr.baseBranch}</code>
+                    {remediation.pr.headSha ? (
+                      <>
+                        {" "}· commit <code className="mono">{remediation.pr.headSha.slice(0, 7)}</code>
+                      </>
+                    ) : null}
+                    .
+                  </p>
                 </div>
-                <p className="ws-pr-banner__sub">
-                  Branch <code className="mono">{remediation.pr.branchName}</code> targeting{" "}
-                  <code className="mono">{remediation.pr.baseBranch}</code> is ready for merge on GitHub.
-                </p>
+
+                <div className="ws-pr-actions">
+                  <button
+                    type="button"
+                    className="ws-btn"
+                    disabled={busyAction !== null}
+                    onClick={handleRefreshPrChecks}
+                  >
+                    <RefreshCw
+                      size={13}
+                      strokeWidth={1.75}
+                      className={busyAction === "checks" ? "ps-icon-spin" : undefined}
+                      aria-hidden="true"
+                    />
+                    <span>{busyAction === "checks" ? "Checking…" : "Refresh checks"}</span>
+                  </button>
+
+                  {remediation.pr.ciStatus === "failed" ? (
+                    <button
+                      type="button"
+                      className="ws-btn ws-btn--primary"
+                      disabled={busyAction !== null}
+                      onClick={handleRepairPrCi}
+                    >
+                      {busyAction === "repairCi" ? (
+                        <Spinner size={13} />
+                      ) : (
+                        <Play size={13} strokeWidth={1.75} aria-hidden="true" />
+                      )}
+                      <span>
+                        {busyAction === "repairCi"
+                          ? "Repairing CI & pushing…"
+                          : "Fix failing CI & update PR"}
+                      </span>
+                    </button>
+                  ) : null}
+
+                  {remediation.pr.draft && remediation.pr.ciStatus === "passed" ? (
+                    <button
+                      type="button"
+                      className="ws-btn ws-btn--primary"
+                      disabled={busyAction !== null}
+                      onClick={handleMarkPrReady}
+                    >
+                      {busyAction === "markReady" ? (
+                        <Spinner size={14} />
+                      ) : (
+                        <Check size={14} strokeWidth={2} aria-hidden="true" />
+                      )}
+                      <span>
+                        {busyAction === "markReady" ? "Promoting…" : "Mark ready for review"}
+                      </span>
+                    </button>
+                  ) : null}
+
+                  <a
+                    href={remediation.pr.prUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ws-btn"
+                  >
+                    <span>Open PR #{remediation.pr.prNumber}</span>
+                    <ExternalLink size={14} strokeWidth={1.75} aria-hidden="true" />
+                  </a>
+                </div>
               </div>
-              <a
-                href={remediation.pr.prUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ws-btn ws-btn--primary"
-              >
-                <span>Open PR #{remediation.pr.prNumber}</span>
-                <ExternalLink size={14} strokeWidth={1.75} aria-hidden="true" />
-              </a>
+
+              {!remediation.pr.ciStatus || remediation.pr.ciStatus === "pending" ? (
+                <ActivityBar label="Waiting for GitHub Actions CI checks" />
+              ) : null}
+
+              {remediation.pr.ciChecks && remediation.pr.ciChecks.length > 0 ? (
+                <ul className="ws-ci-checks" aria-label="Pull Request workflow checks">
+                  {remediation.pr.ciChecks.map((chk) => {
+                    const pillClass =
+                      chk.status !== "completed"
+                        ? "ws-pill ws-pill--warn"
+                        : chk.conclusion === "success" || chk.conclusion === "neutral" || chk.conclusion === "skipped"
+                          ? "ws-pill ws-pill--pos"
+                          : "ws-pill ws-pill--neg";
+                    const label =
+                      chk.status !== "completed"
+                        ? chk.status.replace("_", " ")
+                        : chk.conclusion ?? "completed";
+                    return (
+                      <li key={chk.id} className="ws-ci-row">
+                        <span className="ws-ci-row__name">{chk.name}</span>
+                        <div className="ws-ci-row__right">
+                          <span className={pillClass}>{label}</span>
+                          {chk.htmlUrl ? (
+                            <a
+                              href={chk.htmlUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="ws-ci-row__link"
+                              aria-label={`Open check log for ${chk.name}`}
+                            >
+                              <ExternalLink size={13} strokeWidth={1.75} aria-hidden="true" />
+                            </a>
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+
+              {remediation.pr.ciStatus === "failed" ? (
+                <AlertBanner
+                  variant="error"
+                  context="remediation"
+                  title="Some Pull Request checks didn't pass"
+                  message="One or more checks failed on the latest update. Click Fix failing CI & update PR above to address the failures automatically."
+                />
+              ) : null}
             </div>
           ) : remediation?.status === "succeeded" ? (
             <div className="ws-panel ws-pr-banner is-ready">
@@ -932,8 +1266,8 @@ export function InvestigationDetail({
                   <span>Fix verified — permission required to open Pull Request</span>
                 </div>
                 <p className="ws-pr-banner__sub">
-                  All verification checks exited cleanly (<code>exit 0</code>). Approve creation of branch{" "}
-                  <code className="mono">{remediation.pr?.branchName}</code> and Pull Request for merge into{" "}
+                  All verification checks passed. Approve creating branch{" "}
+                  <code className="mono">{remediation.pr?.branchName}</code> and opening a Pull Request into{" "}
                   <code className="mono">{remediation.pr?.baseBranch || "main"}</code>.
                 </p>
               </div>
@@ -974,14 +1308,41 @@ export function InvestigationDetail({
                 ) : null}
               </div>
 
-              <div className="ws-notice">
-                <div>
-                  <strong>Diagnosis:</strong> {remediation.diagnosis}
-                </div>
-                {remediation.fixSummary ? (
-                  <div style={{ marginTop: 6 }}>
-                    <strong>Proposed fix:</strong> {remediation.fixSummary}
+              <div className="ws-diag-stack">
+                <section className="ws-diag-card" aria-label="Root cause analysis">
+                  <div className="ws-diag-card__head">
+                    <span className="ws-pill ws-pill--neg">Root cause</span>
+                    {remediation.ecosystem ? (
+                      <span className="ws-diag-card__meta mono">
+                        {remediation.ecosystem}
+                      </span>
+                    ) : null}
                   </div>
+                  <FormattedProse text={remediation.diagnosis} />
+                </section>
+
+                {remediation.fixSummary ? (
+                  <section className="ws-diag-card ws-diag-card--fix" aria-label="Suggested fix">
+                    <div className="ws-diag-card__head">
+                      <span className="ws-pill ws-pill--pos">Proposed fix</span>
+                      {remediation.verificationCommand ? (
+                        <code className="ps-inline-code ps-inline-code--file">
+                          {remediation.verificationCommand}
+                        </code>
+                      ) : null}
+                    </div>
+                    <FormattedProse text={remediation.fixSummary} className="ps-prose--lead" />
+                    {remediation.patches.length > 0 ? (
+                      <ul className="ws-diag-files" aria-label="Patched files summary">
+                        {remediation.patches.map((p) => (
+                          <li key={p.path} className="ws-diag-file-row">
+                            <code className="ps-inline-code ps-inline-code--file">{p.path}</code>
+                            <span>{p.explanation}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </section>
                 ) : null}
               </div>
 
@@ -1071,7 +1432,7 @@ export function InvestigationDetail({
         tabIndex={activeTab === "hypothesis" ? 0 : undefined}
         {...(activeTab !== "hypothesis" ? ({ hidden: "until-found" } as Record<string, string>) : {})}
       >
-        <div className="ws-panel-inner">
+        <div className="ws-panel-inner ps-panel-enter">
           <div className="ws-panel">
             <div className="ws-panel__head">
               <h2 className="ws-panel__title">Root-cause hypothesis & reproduction test</h2>
@@ -1081,7 +1442,8 @@ export function InvestigationDetail({
                 disabled={busyAction !== null || inspection?.ecosystem === "unsupported"}
                 onClick={handleHypothesize}
               >
-                {busyAction === "hypothesize" ? "Generating…" : "Generate hypothesis"}
+                {busyAction === "hypothesize" ? <Spinner size={14} /> : null}
+                <span>{busyAction === "hypothesize" ? "Generating…" : "Generate hypothesis"}</span>
               </button>
             </div>
 
@@ -1204,7 +1566,7 @@ export function InvestigationDetail({
         tabIndex={activeTab === "runs" ? 0 : undefined}
         {...(activeTab !== "runs" ? ({ hidden: "until-found" } as Record<string, string>) : {})}
       >
-        <div className="ws-panel-inner">
+        <div className="ws-panel-inner ps-panel-enter">
           <div className="ws-panel" style={{ display: "grid", gap: 16 }}>
             <div className="ws-panel__head" style={{ marginBottom: 0 }}>
               <h2 className="ws-panel__title">Verification run dispatch</h2>
@@ -1249,7 +1611,7 @@ export function InvestigationDetail({
             ) : (
               <div style={{ display: "grid", gap: 12 }}>
                 <div className="ws-notice ws-notice--warn">
-                  Manual mode records an observed verification outcome when no automated runner is connected to this environment.
+                  Use manual mode to record a verification result directly when automated test runs aren&apos;t enabled.
                 </div>
                 <div className="ws-grid-2">
                   <div className="ps-field">
@@ -1314,7 +1676,8 @@ export function InvestigationDetail({
                 disabled={busyAction !== null || (runMode === "sandbox" && !imageDigestInput.trim())}
                 onClick={handleRun}
               >
-                {busyAction === "run" ? "Running verification…" : "Execute run & classify"}
+                {busyAction === "run" ? <Spinner size={14} /> : null}
+                <span>{busyAction === "run" ? "Running verification…" : "Execute run & classify"}</span>
               </button>
             </div>
           </div>
@@ -1356,7 +1719,7 @@ export function InvestigationDetail({
         tabIndex={activeTab === "package" ? 0 : undefined}
         {...(activeTab !== "package" ? ({ hidden: "until-found" } as Record<string, string>) : {})}
       >
-        <div className="ws-panel-inner">
+        <div className="ws-panel-inner ps-panel-enter">
           <div className="ws-panel" style={{ display: "grid", gap: 14 }}>
             <div className="ws-panel__head" style={{ marginBottom: 0 }}>
               <h2 className="ws-panel__title">Evidence package</h2>
@@ -1367,11 +1730,14 @@ export function InvestigationDetail({
                   disabled={busyAction !== null}
                   onClick={handleLoadPackage}
                 >
-                  {busyAction === "package"
-                    ? "Building…"
-                    : pkgData
-                      ? "Rebuild package"
-                      : "Build package"}
+                  {busyAction === "package" ? <Spinner size={14} /> : null}
+                  <span>
+                    {busyAction === "package"
+                      ? "Building…"
+                      : pkgData
+                        ? "Rebuild package"
+                        : "Build package"}
+                  </span>
                 </button>
                 {pkgData ? (
                   <button
@@ -1407,13 +1773,13 @@ export function InvestigationDetail({
 
             {pkgData?.readyToFile === false ? (
               <div className="ws-notice ws-notice--warn" role="alert">
-                Not ready to file: {pkgData.blockingUnknowns} blocking unknown(s) remain. Review and answer before opening upstream.
+                A few important details are still missing ({pkgData.blockingUnknowns} open question(s)). Review them before sharing this report.
               </div>
             ) : null}
 
             {pkgData?.copyToClipboard ? (
               <div className="ws-notice">
-                The package exceeds GitHub URL length limits. Copy the markdown below and paste it into the issue form.
+                This summary is too long to prefill automatically. Copy the text below and paste it into the new GitHub issue.
               </div>
             ) : null}
 
@@ -1487,11 +1853,21 @@ export function InvestigationDetail({
             />
           </div>
 
+          <label className="ws-checkbox-row">
+            <input
+              type="checkbox"
+              className="ps-checkbox"
+              checked={prDraftInput}
+              onChange={(e) => setPrDraftInput(e.target.checked)}
+            />
+            <span>Open as Draft Pull Request until GitHub Actions checks pass</span>
+          </label>
+
           {showPrTokenInput ? (
             <div className="ps-field">
               <label htmlFor="pr-token">GitHub personal access token (write permissions)</label>
               <span className="ps-field__hint">
-                Required only if your configured server token is read-only. Used for this PR request only and never stored.
+                Only needed if your workspace doesn&apos;t already have write access to this repository. Used once for this request and never saved.
               </span>
               <input
                 id="pr-token"
@@ -1514,9 +1890,13 @@ export function InvestigationDetail({
           )}
 
           {prError ? (
-            <div className="ws-notice ws-notice--neg" role="alert">
-              {prError}
-            </div>
+            <AlertBanner
+              variant="error"
+              context="pr"
+              message={prError}
+              onDismiss={() => setPrError(null)}
+              compact
+            />
           ) : null}
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
@@ -1529,7 +1909,11 @@ export function InvestigationDetail({
               Cancel
             </button>
             <button type="submit" className="ws-btn ws-btn--primary" disabled={busyAction === "pr"}>
-              <GitPullRequest size={14} strokeWidth={1.75} aria-hidden="true" />
+              {busyAction === "pr" ? (
+                <Spinner size={14} />
+              ) : (
+                <GitPullRequest size={14} strokeWidth={1.75} aria-hidden="true" />
+              )}
               <span>{busyAction === "pr" ? "Creating Pull Request…" : "Confirm & create Pull Request"}</span>
             </button>
           </div>

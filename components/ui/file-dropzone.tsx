@@ -57,15 +57,15 @@ export function FileDropzone({
 
     for (const file of Array.from(incoming)) {
       if (next.length >= maxFiles) {
-        setError(`Maximum ${maxFiles} screenshots allowed.`);
+        setError(`You can attach up to ${maxFiles} screenshots.`);
         break;
       }
       if (!ACCEPTED_TYPES.has(file.type)) {
-        setError(`Unsupported file type for "${file.name}". Only PNG or JPEG images are accepted.`);
+        setError(`"${file.name}" isn't a supported image format. Please choose a PNG or JPEG image.`);
         continue;
       }
       if (file.size > maxBytes) {
-        setError(`"${file.name}" exceeds the ${maxSizeMB}\u00a0MB limit.`);
+        setError(`"${file.name}" is too large. Each screenshot must be under ${maxSizeMB}\u00a0MB.`);
         continue;
       }
       const id = `${file.name}-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

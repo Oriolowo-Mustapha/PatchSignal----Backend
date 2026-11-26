@@ -28,7 +28,7 @@ export function isTransientDbError(err: unknown): boolean {
     return true;
   }
   const msg = err instanceof Error ? err.message : String(err);
-  return /Timed out fetching a new connection|Can't reach database server|Server has closed the connection|Connection terminated unexpectedly|P2024/i.test(
+  return /Timed out fetching a new connection|Can't reach database server|Server has closed the connection|Connection terminated unexpectedly|ConnectionReset|10054|ECONNRESET|forcibly closed|P2024/i.test(
     msg
   );
 }

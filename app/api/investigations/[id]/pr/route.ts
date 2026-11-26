@@ -34,6 +34,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     body?: string;
     branchName?: string;
     baseBranch?: string;
+    draft?: boolean;
     githubToken?: string;
   };
 
@@ -83,6 +84,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       title: prTitle,
       body: prBody,
       patches: remediation.patches,
+      draft: typeof body.draft === "boolean" ? body.draft : true,
       githubToken: typeof body.githubToken === "string" ? body.githubToken : undefined,
     });
 
@@ -95,11 +97,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         body: prBody,
         branchName: result.branchName,
         baseBranch: result.baseBranch,
+        draft: result.draft,
+        readyForReview: !result.draft,
         prUrl: result.prUrl,
         prNumber: result.prNumber,
         headSha: result.headSha,
+        ciStatus: "pending",
+        ciChecks: [],
+        ciFailureLog: undefined,
+        ciRepairRounds: remediation.pr?.ciRepairRounds ?? 0,
         ...(result.forkOwner ? { forkOwner: result.forkOwner } : {}),
-        createdAt: new Date().toISOString(),
+        createdAt: remediation.pr?.createdAt ?? new Date().toISOString(),
       },
     };
     const nextInspection = { ...inspection, remediation: nextRemediation };

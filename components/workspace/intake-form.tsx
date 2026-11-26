@@ -4,7 +4,9 @@ import * as React from "react";
 import { ArrowRight, Check } from "lucide-react";
 import { apiClient, ApiRequestError } from "@/lib/ui/api-client";
 import { useAccessibleFormValidation } from "@/lib/ui/use-accessible-form";
+import { AlertBanner } from "@/components/ui/alert-banner";
 import { FileDropzone, type SelectedScreenshot } from "@/components/ui/file-dropzone";
+import { Spinner } from "@/components/ui/loaders";
 
 type IntakeFormProps = {
   onCreated: (id: string, autoAnalyze: boolean) => Promise<void> | void;
@@ -72,7 +74,9 @@ export function IntakeForm({ onCreated, onAuthExpired }: IntakeFormProps) {
         onAuthExpired();
         return;
       }
-      setServerError(err instanceof Error ? err.message : "Failed to create investigation.");
+      setServerError(
+        err instanceof Error ? err.message : "We couldn't submit your bug report. Please try again."
+      );
     } finally {
       setSubmitting(false);
     }
@@ -123,7 +127,7 @@ export function IntakeForm({ onCreated, onAuthExpired }: IntakeFormProps) {
                 placeholder="https://github.com/owner/repository"
               />
               <div id="intake-repo-error" className="ps-error-msg">
-                Enter a valid public https://github.com/owner/repo URL.
+                Please enter a valid public GitHub repository link (for example, https://github.com/owner/repo).
               </div>
             </div>
 
@@ -144,7 +148,7 @@ export function IntakeForm({ onCreated, onAuthExpired }: IntakeFormProps) {
                 placeholder="Sign-up rejects email addresses containing a plus sign like ade+test@gmail.com"
               />
               <div id="intake-desc-error" className="ps-error-msg">
-                Enter a bug description before creating the investigation.
+                Please describe what went wrong before continuing.
               </div>
             </div>
           </section>
@@ -255,9 +259,13 @@ export function IntakeForm({ onCreated, onAuthExpired }: IntakeFormProps) {
             </label>
 
             {serverError ? (
-              <div className="ws-notice ws-notice--neg" role="alert">
-                {serverError}
-              </div>
+              <AlertBanner
+                variant="error"
+                context="intake"
+                message={serverError}
+                onDismiss={() => setServerError(null)}
+                compact
+              />
             ) : null}
 
             <button
@@ -265,6 +273,7 @@ export function IntakeForm({ onCreated, onAuthExpired }: IntakeFormProps) {
               className="ws-btn ws-btn--primary ws-intake-submit"
               disabled={submitting}
             >
+              {submitting ? <Spinner size={15} /> : null}
               <span>{submitting ? "Creating investigation…" : "Create investigation"}</span>
               {submitting ? null : <ArrowRight size={15} strokeWidth={1.75} aria-hidden="true" />}
             </button>

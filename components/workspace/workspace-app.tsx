@@ -12,6 +12,8 @@ import {
   Search,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { AlertBanner } from "@/components/ui/alert-banner";
+import { InvestigationSkeleton, WorkspaceSkeleton } from "@/components/ui/loaders";
 import {
   CommandPalette,
   CommandPaletteTrigger,
@@ -67,6 +69,7 @@ export function WorkspaceApp() {
   const [mobileQueueOpen, setMobileQueueOpen] = React.useState(false);
   const [paletteOpen, setPaletteOpen] = React.useState(false);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const refreshInFlightRef = React.useRef(false);
 
   const clearAuthState = React.useCallback(() => {
     clearLegacyStoredToken();
@@ -98,7 +101,20 @@ export function WorkspaceApp() {
         const listRes = await apiClient.listInvestigations().catch(() => null);
         if (!cancelled && listRes) {
           setInvestigations(listRes.investigations);
-          if (listRes.investigations.length > 0) setSelectedId(listRes.investigations[0].id);
+          const params =
+            typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+          const requestedNew = params?.get("new") === "1";
+          const requestedId = params?.get("id");
+          if (requestedNew) {
+            setSelectedId(null);
+          } else if (
+            requestedId &&
+            listRes.investigations.some((item) => item.id === requestedId)
+          ) {
+            setSelectedId(requestedId);
+          } else if (listRes.investigations.length > 0) {
+            setSelectedId(listRes.investigations[0].id);
+          }
         }
       } catch {
         // Unauthenticated — render auth screen
@@ -139,24 +155,52 @@ export function WorkspaceApp() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [user]);
 
-  const refreshSelected = React.useCallback(async () => {
-    if (!user || !selectedId) return;
-    try {
-      const [inv, listRes] = await Promise.all([
-        apiClient.getInvestigation(selectedId),
-        apiClient.listInvestigations(),
-      ]);
-      setDetail(inv);
-      setInvestigations(listRes.investigations);
-      setLoadError(null);
-    } catch (err) {
-      if (err instanceof ApiRequestError && err.status === 401) {
-        clearAuthState();
-        return;
+  const refreshSelected = React.useCallback(
+    async (options?: { detailOnly?: boolean }) => {
+      if (!user || !selectedId || refreshInFlightRef.current) return;
+      refreshInFlightRef.current = true;
+      try {
+        if (options?.detailOnly) {
+          const inv = await apiClient.getInvestigation(selectedId);
+          setDetail(inv);
+          setInvestigations((prev) =>
+            prev.map((item) =>
+              item.id === inv.id
+                ? {
+                    ...item,
+                    stage: inv.stage,
+                    status: inv.status,
+                    summary: inv.summary ?? item.summary,
+                  }
+                : item
+            )
+          );
+          setLoadError(null);
+          return;
+        }
+        const [inv, listRes] = await Promise.all([
+          apiClient.getInvestigation(selectedId),
+          apiClient.listInvestigations(),
+        ]);
+        setDetail(inv);
+        setInvestigations(listRes.investigations);
+        setLoadError(null);
+      } catch (err) {
+        if (err instanceof ApiRequestError && err.status === 401) {
+          clearAuthState();
+          return;
+        }
+        setLoadError(
+          err instanceof Error
+            ? err.message
+            : "We couldn't load this investigation right now. Please try again."
+        );
+      } finally {
+        refreshInFlightRef.current = false;
       }
-      setLoadError(err instanceof Error ? err.message : "Failed to load investigation");
-    }
-  }, [user, selectedId, clearAuthState]);
+    },
+    [user, selectedId, clearAuthState]
+  );
 
   React.useEffect(() => {
     if (!user || !selectedId) {
@@ -177,7 +221,11 @@ export function WorkspaceApp() {
           clearAuthState();
           return;
         }
-        setLoadError(err instanceof Error ? err.message : "Failed to load investigation");
+        setLoadError(
+          err instanceof Error
+            ? err.message
+            : "We couldn't load this investigation right now. Please try again."
+        );
       })
       .finally(() => {
         if (!cancelled) setLoadingDetail(false);
@@ -273,21 +321,7 @@ export function WorkspaceApp() {
   }, [investigations]);
 
   if (booting) {
-    return (
-      <div className="auth-vault">
-        <main id="main-content" className="auth-vault__stage">
-          <div className="auth-chamber-frame" style={{ maxWidth: 460 }}>
-            <div className="auth-chamber auth-chamber--form">
-              <div className="auth-card__head">
-                <h1 className="auth-title">Preparing your workspace</h1>
-                <p className="auth-sub">Loading your investigation queue</p>
-              </div>
-              <div className="ws-skeleton" />
-            </div>
-          </div>
-        </main>
-      </div>
-    );
+    return <WorkspaceSkeleton />;
   }
 
   if (!user) {
@@ -421,6 +455,10 @@ export function WorkspaceApp() {
 
       {inDrawer ? (
         <div className="ws-rail__foot">
+          <Link href="/dashboard" className="ws-rail__link">
+            <Layers size={16} strokeWidth={1.5} aria-hidden="true" />
+            <span>Dashboard</span>
+          </Link>
           <Link href="/docs" className="ws-rail__link">
             <BookOpen size={16} strokeWidth={1.5} aria-hidden="true" />
             <span>API Docs</span>
@@ -445,7 +483,7 @@ export function WorkspaceApp() {
       <header className="ws-topbar">
         <div className="ws-topbar__left">
           <Link href="/" className="ws-brand">
-            <BrandMark size={20} pulseColor="#A3E635" />
+            <BrandMark size={20} pulseColor="#A3E635" animated />
             <span>PatchSignal</span>
           </Link>
           <span className="ws-topbar__sep" aria-hidden="true">
@@ -493,6 +531,10 @@ export function WorkspaceApp() {
             </kbd>
           </button>
 
+          <Link href="/dashboard" className="ws-topbar__link">
+            Dashboard
+          </Link>
+
           <Link href="/docs" className="ws-topbar__link">
             API Docs
           </Link>
@@ -525,22 +567,26 @@ export function WorkspaceApp() {
         <main id="main-content" className="ws-main">
           <div className="ws-main__inner">
             {selectedId && detail ? (
-              <InvestigationDetail
-                investigation={detail}
-                onRefresh={refreshSelected}
-                onAuthExpired={clearAuthState}
-              />
+              <div key={detail.id} className="ps-panel-enter">
+                <InvestigationDetail
+                  investigation={detail}
+                  onRefresh={refreshSelected}
+                  onAuthExpired={clearAuthState}
+                />
+              </div>
             ) : selectedId && loadingDetail ? (
-              <div style={{ display: "grid", gap: 16 }}>
-                <h1 className="ws-h1">Loading investigation</h1>
-                <div className="ws-skeleton" />
-              </div>
+              <InvestigationSkeleton />
             ) : loadError ? (
-              <div className="ws-notice ws-notice--neg" role="alert">
-                {loadError}
-              </div>
+              <AlertBanner
+                variant="error"
+                context="workspace"
+                message={loadError}
+                onDismiss={() => setLoadError(null)}
+              />
             ) : (
-              <IntakeForm onCreated={handleCreated} onAuthExpired={clearAuthState} />
+              <div key="intake" className="ps-panel-enter">
+                <IntakeForm onCreated={handleCreated} onAuthExpired={clearAuthState} />
+              </div>
             )}
           </div>
         </main>

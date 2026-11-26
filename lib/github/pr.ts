@@ -1,5 +1,5 @@
 import { github } from "@/lib/github/client";
-import type { FilePatch } from "@/lib/remediation/types";
+import type { CiCheckItem, CiOverallStatus, FilePatch } from "@/lib/remediation/types";
 
 export class CreatePullRequestError extends Error {
   status: number;
@@ -38,6 +38,7 @@ export async function createFixPullRequest(input: {
   title: string;
   body: string;
   patches: FilePatch[];
+  draft?: boolean;
   githubToken?: string;
 }): Promise<{
   prUrl: string;
@@ -45,6 +46,8 @@ export async function createFixPullRequest(input: {
   branchName: string;
   baseBranch: string;
   headSha: string;
+  draft: boolean;
+  updatedExisting?: boolean;
   forkOwner?: string;
 }> {
   const effectiveToken = input.githubToken?.trim() || undefined;
@@ -112,6 +115,28 @@ export async function createFixPullRequest(input: {
       commit_sha: baseCommitSha,
     });
 
+    // Append onto existing branch if already pushed (e.g. CI repair round), else branch from baseBranch.
+    let parentSha = baseCommitSha;
+    let baseTreeSha = baseCommit.tree.sha;
+    let branchExists = false;
+    try {
+      const { data: existingRef } = await octokit.rest.git.getRef({
+        owner: pushOwner,
+        repo: input.repo,
+        ref: `heads/${input.branchName}`,
+      });
+      branchExists = true;
+      parentSha = existingRef.object.sha;
+      const { data: parentCommit } = await octokit.rest.git.getCommit({
+        owner: pushOwner,
+        repo: input.repo,
+        commit_sha: parentSha,
+      });
+      baseTreeSha = parentCommit.tree.sha;
+    } catch {
+      // Branch does not exist yet
+    }
+
     const treeEntries = await Promise.all(
       input.patches.map(async (p) => {
         const { data: blob } = await octokit.rest.git.createBlob({
@@ -132,7 +157,7 @@ export async function createFixPullRequest(input: {
     const { data: newTree } = await octokit.rest.git.createTree({
       owner: pushOwner,
       repo: input.repo,
-      base_tree: baseCommit.tree.sha,
+      base_tree: baseTreeSha,
       tree: treeEntries,
     });
 
@@ -141,28 +166,29 @@ export async function createFixPullRequest(input: {
       repo: input.repo,
       message: input.title,
       tree: newTree.sha,
-      parents: [baseCommitSha],
+      parents: [parentSha],
     });
 
     const fullRef = `refs/heads/${input.branchName}`;
-    try {
+    if (branchExists) {
+      await octokit.rest.git.updateRef({
+        owner: pushOwner,
+        repo: input.repo,
+        ref: `heads/${input.branchName}`,
+        sha: newCommit.sha,
+        force: false,
+      });
+    } else {
       await octokit.rest.git.createRef({
         owner: pushOwner,
         repo: input.repo,
         ref: fullRef,
         sha: newCommit.sha,
       });
-    } catch {
-      await octokit.rest.git.updateRef({
-        owner: pushOwner,
-        repo: input.repo,
-        ref: `heads/${input.branchName}`,
-        sha: newCommit.sha,
-        force: true,
-      });
     }
 
     const headRef = forkOwner ? `${forkOwner}:${input.branchName}` : input.branchName;
+    const requestedDraft = input.draft ?? true;
 
     try {
       const { data: pr } = await octokit.rest.pulls.create({
@@ -172,6 +198,7 @@ export async function createFixPullRequest(input: {
         head: headRef,
         base: baseBranch,
         body: input.body,
+        draft: requestedDraft,
       });
       return {
         prUrl: pr.html_url,
@@ -179,6 +206,8 @@ export async function createFixPullRequest(input: {
         branchName: input.branchName,
         baseBranch,
         headSha: newCommit.sha,
+        draft: Boolean(pr.draft),
+        updatedExisting: false,
         ...(forkOwner ? { forkOwner } : {}),
       };
     } catch (prErr) {
@@ -196,6 +225,8 @@ export async function createFixPullRequest(input: {
           branchName: input.branchName,
           baseBranch,
           headSha: newCommit.sha,
+          draft: Boolean(existing.draft),
+          updatedExisting: true,
           ...(forkOwner ? { forkOwner } : {}),
         };
       }
@@ -216,4 +247,155 @@ export async function createFixPullRequest(input: {
       "PR_CREATE_FAILED"
     );
   }
+}
+
+export function extractFailureLines(rawLog: string, maxChars = 4000): string {
+  const cleaned = rawLog
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "")
+    .replace(/\r/g, "");
+  const lines = cleaned
+    .split("\n")
+    .map((line) => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*/, ""));
+
+  const hitIndices: number[] = [];
+  const failureRe =
+    /error\s+[A-Z]+\d+|error:|failed!|failed\s+\d+|FAIL\b|Exception:|AssertionError|Expected:|Actual:|Process completed with exit code [1-9]|##\[error\]/i;
+  for (let i = 0; i < lines.length; i++) {
+    if (failureRe.test(lines[i])) {
+      hitIndices.push(i);
+    }
+  }
+
+  if (hitIndices.length === 0) {
+    return lines.join("\n").slice(-maxChars).trim();
+  }
+
+  const keep = new Set<number>();
+  for (const idx of hitIndices) {
+    for (let k = Math.max(0, idx - 2); k <= Math.min(lines.length - 1, idx + 3); k++) {
+      keep.add(k);
+    }
+  }
+
+  const out: string[] = [];
+  let prev = -2;
+  for (const idx of Array.from(keep).sort((a, b) => a - b)) {
+    if (prev >= 0 && idx > prev + 1) out.push("...");
+    out.push(lines[idx]);
+    prev = idx;
+  }
+
+  const joined = out.join("\n").trim();
+  return joined.length <= maxChars ? joined : `${joined.slice(0, Math.floor(maxChars * 0.5))}\n...\n${joined.slice(-Math.floor(maxChars * 0.45))}`;
+}
+
+export async function fetchPullRequestChecks(input: {
+  owner: string;
+  repo: string;
+  headSha: string;
+  prCreatedAt?: string;
+  githubToken?: string;
+}): Promise<{
+  ciStatus: CiOverallStatus;
+  checks: CiCheckItem[];
+  ciFailureLog?: string;
+  checkedAt: string;
+}> {
+  const octokit = github(input.githubToken?.trim() || undefined);
+  const { data } = await octokit.rest.checks.listForRef({
+    owner: input.owner,
+    repo: input.repo,
+    ref: input.headSha,
+    per_page: 50,
+  });
+
+  const checks: CiCheckItem[] = data.check_runs.map((run) => ({
+    id: run.id,
+    name: run.name,
+    status: run.status,
+    conclusion: run.conclusion ?? null,
+    ...(run.html_url ? { htmlUrl: run.html_url } : {}),
+    ...(run.output?.summary || run.output?.title
+      ? { summary: (run.output.summary || run.output.title || "").slice(0, 500) }
+      : {}),
+  }));
+
+  const failingConclusions = new Set(["failure", "timed_out", "action_required"]);
+  const failedRuns = data.check_runs.filter(
+    (run) => run.status === "completed" && run.conclusion && failingConclusions.has(run.conclusion)
+  );
+  const anyIncomplete = data.check_runs.some((run) => run.status !== "completed");
+
+  let ciStatus: CiOverallStatus = "unknown";
+  if (failedRuns.length > 0) {
+    ciStatus = "failed";
+  } else if (anyIncomplete) {
+    ciStatus = "pending";
+  } else if (checks.length > 0) {
+    ciStatus = "passed";
+  } else if (input.prCreatedAt && Date.now() - new Date(input.prCreatedAt).getTime() < 120_000) {
+    ciStatus = "pending";
+  }
+
+  const snippets: string[] = [];
+  for (const failed of failedRuns.slice(0, 2)) {
+    let snippet = "";
+    try {
+      const logRes = await octokit.rest.actions.downloadJobLogsForWorkflowRun({
+        owner: input.owner,
+        repo: input.repo,
+        job_id: failed.id,
+      });
+      if (typeof logRes.data === "string" && logRes.data.trim()) {
+        snippet = extractFailureLines(logRes.data, 2200);
+      }
+    } catch {
+      // Fine-grained tokens without Actions:Read or external checks won't allow raw job log downloads; fall back cleanly.
+    }
+    if (!snippet) {
+      const fallback = [failed.output?.title, failed.output?.summary, failed.output?.text]
+        .filter(Boolean)
+        .join("\n")
+        .trim();
+      if (fallback) snippet = extractFailureLines(fallback, 1800);
+    }
+    if (snippet) {
+      const matching = checks.find((c) => c.id === failed.id);
+      if (matching) matching.failureSnippet = snippet;
+      snippets.push(`=== ${failed.name} (${failed.conclusion ?? "failed"}) ===\n${snippet}`);
+    }
+  }
+
+  const ciFailureLog = snippets.length > 0 ? snippets.join("\n\n").slice(0, 6000) : undefined;
+  return {
+    ciStatus,
+    checks,
+    ...(ciFailureLog ? { ciFailureLog } : {}),
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+export async function markPullRequestReady(input: {
+  owner: string;
+  repo: string;
+  prNumber: number;
+  githubToken?: string;
+}): Promise<{ readyForReview: boolean; draft: boolean }> {
+  const octokit = github(input.githubToken?.trim() || undefined);
+  const { data: pr } = await octokit.rest.pulls.get({
+    owner: input.owner,
+    repo: input.repo,
+    pull_number: input.prNumber,
+  });
+  if (pr.draft) {
+    await octokit.graphql(
+      `mutation($id: ID!) {
+        markPullRequestReadyForReview(input: { pullRequestId: $id }) {
+          pullRequest { isDraft }
+        }
+      }`,
+      { id: pr.node_id }
+    );
+  }
+  return { readyForReview: true, draft: false };
 }

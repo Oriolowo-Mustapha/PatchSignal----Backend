@@ -1,10 +1,19 @@
-export function BrandMark({ size = 22, pulseColor = "#A3E635" }: { size?: number; pulseColor?: string }) {
+export function BrandMark({
+  size = 22,
+  pulseColor = "#A3E635",
+  animated = false,
+}: {
+  size?: number;
+  pulseColor?: string;
+  animated?: boolean;
+}) {
   return (
     <svg
       width={size}
       height={size}
       viewBox="0 0 24 24"
       fill="none"
+      className={animated ? "ps-brand-mark is-animated" : "ps-brand-mark"}
       aria-hidden="true"
     >
       <rect
@@ -22,6 +31,7 @@ export function BrandMark({ size = 22, pulseColor = "#A3E635" }: { size?: number
         strokeWidth="1.75"
         strokeLinecap="round"
         strokeLinejoin="round"
+        className={animated ? "ps-brand-mark__pulse" : undefined}
       />
     </svg>
   );

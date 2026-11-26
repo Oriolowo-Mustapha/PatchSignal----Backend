@@ -263,11 +263,42 @@ export async function GET() {
       "/api/investigations/{id}/pr": {
         post: {
           tags: ["investigations"],
-          summary: "Create GitHub Pull Request for verified fix after explicit user approval (approved: true)",
+          summary: "Create GitHub Pull Request (Draft by default) for verified fix after explicit approval",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: {
             "201": { description: "{ pr, remediation }" },
             "400": { description: "approved: true required or no patches found" },
+            "403": { description: "GITHUB_WRITE_TOKEN_NEEDED" },
+          },
+        },
+      },
+      "/api/investigations/{id}/pr/checks": {
+        get: {
+          tags: ["investigations"],
+          summary: "Poll GitHub Actions check runs & extract failing job logs for the open Pull Request",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "{ pr, ciStatus, checks, ciFailureLog }" },
+            "400": { description: "No open Pull Request found" },
+          },
+        },
+        post: {
+          tags: ["investigations"],
+          summary: "Promote a verified Draft Pull Request to Ready for review (action: mark_ready)",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "{ pr }" },
+          },
+        },
+      },
+      "/api/investigations/{id}/pr/repair": {
+        post: {
+          tags: ["investigations"],
+          summary: "Feed failing GitHub Actions logs into remediation loop and push a verified follow-up commit to the PR branch",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "{ remediation, pr, pushed }" },
+            "400": { description: "approved: true required or no failing CI checks detected" },
             "403": { description: "GITHUB_WRITE_TOKEN_NEEDED" },
           },
         },

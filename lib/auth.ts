@@ -80,17 +80,19 @@ export async function findUserById(id: string) {
       createdAt: user.createdAt,
     };
   }
-  return prisma.user.findUnique({
-    where: { id },
-    select: { id: true, email: true, name: true, lastLoginAt: true, createdAt: true },
-  });
+  return withDbRetry(() =>
+    prisma.user.findUnique({
+      where: { id },
+      select: { id: true, email: true, name: true, lastLoginAt: true, createdAt: true },
+    })
+  );
 }
 
 export async function findUserByEmail(email: string) {
   if (canUseMemoryAuth()) {
     return memoryUserStore.findByEmail(email);
   }
-  return prisma.user.findUnique({ where: { email } });
+  return withDbRetry(() => prisma.user.findUnique({ where: { email } }));
 }
 
 export async function createUser(input: {
@@ -117,15 +119,17 @@ export async function createUser(input: {
       createdAt: created.createdAt,
     };
   }
-  return prisma.user.create({
-    data: {
-      email: input.email,
-      passwordHash: input.passwordHash,
-      name: input.name,
-      ...(input.lastLoginAt ? { lastLoginAt: input.lastLoginAt } : {}),
-    },
-    select: { id: true, email: true, name: true, lastLoginAt: true, createdAt: true },
-  });
+  return withDbRetry(() =>
+    prisma.user.create({
+      data: {
+        email: input.email,
+        passwordHash: input.passwordHash,
+        name: input.name,
+        ...(input.lastLoginAt ? { lastLoginAt: input.lastLoginAt } : {}),
+      },
+      select: { id: true, email: true, name: true, lastLoginAt: true, createdAt: true },
+    })
+  );
 }
 
 export async function touchLastLogin(userId: string): Promise<Date> {
@@ -134,10 +138,12 @@ export async function touchLastLogin(userId: string): Promise<Date> {
     memoryUserStore.touchLastLogin(userId, now.toISOString());
     return now;
   }
-  await prisma.user.update({
-    where: { id: userId },
-    data: { lastLoginAt: now },
-  });
+  await withDbRetry(() =>
+    prisma.user.update({
+      where: { id: userId },
+      data: { lastLoginAt: now },
+    })
+  );
   return now;
 }
 
@@ -164,15 +170,17 @@ export async function issueSession(
     });
     sessionId = created.id;
   } else {
-    const created = await prisma.session.create({
-      data: {
-        userId: user.id,
-        tokenHash,
-        userAgent,
-        expiresAt,
-      },
-      select: { id: true },
-    });
+    const created = await withDbRetry(() =>
+      prisma.session.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          userAgent,
+          expiresAt,
+        },
+        select: { id: true },
+      })
+    );
     sessionId = created.id;
   }
 
@@ -392,4 +400,15 @@ export function checkAuthRateLimit(
 export function owns(inv: unknown, userId: string): boolean {
   if (!inv || typeof inv !== "object") return false;
   return (inv as { userId?: string | null }).userId === userId;
+}
+
+export async function hasActiveSessionToken(token: string | null | undefined): Promise<boolean> {
+  if (!token) return false;
+  const req = new Request("http://internal.local/session", {
+    headers: {
+      cookie: `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    },
+  });
+  const result = await authUser(req);
+  return !(result instanceof NextResponse);
 }

@@ -1,8 +1,20 @@
 "use client";
 
-import type { RemediationData, PullRequestState } from "@/lib/remediation/types";
+import type {
+  CiCheckItem,
+  CiOverallStatus,
+  PullRequestState,
+  RemediationData,
+} from "@/lib/remediation/types";
 
-export type { FilePatch, RemediationIteration, PullRequestState, RemediationData } from "@/lib/remediation/types";
+export type {
+  CiCheckItem,
+  CiOverallStatus,
+  FilePatch,
+  PullRequestState,
+  RemediationData,
+  RemediationIteration,
+} from "@/lib/remediation/types";
 
 export type HealthResponse = {
   ok: boolean;
@@ -39,6 +51,14 @@ export type InvestigationSummary = {
   modelId: string | null;
   createdAt: string;
   analysisJob: AnalysisJobView | null;
+  remediation?: {
+    status: string;
+    ecosystem?: string;
+    prNumber?: number;
+    prUrl?: string;
+    prDraft?: boolean;
+    ciStatus?: string;
+  } | null;
   latestClassification: { status: string; rule: string; justification: string } | null;
   attachmentCount: number;
   evidenceCount: number;
@@ -206,7 +226,11 @@ async function requestJson<T>(url: string, init: RequestInit = {}, token?: strin
   });
   const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string } & T;
   if (!res.ok) {
-    throw new ApiRequestError(res.status, data.error || `Request failed (${res.status})`, data.code);
+    throw new ApiRequestError(
+      res.status,
+      data.error || "Something went wrong while completing your request.",
+      data.code
+    );
   }
   return data;
 }
@@ -284,12 +308,42 @@ export const apiClient = {
       body?: string;
       branchName?: string;
       baseBranch?: string;
+      draft?: boolean;
       githubToken?: string;
     },
     token?: string | null
   ) =>
     requestJson<{ pr: PullRequestState; remediation: RemediationData }>(
       `/api/investigations/${id}/pr`,
+      { method: "POST", body: JSON.stringify(body) },
+      token
+    ),
+  getPrChecks: (id: string, token?: string | null) =>
+    requestJson<{
+      pr: PullRequestState;
+      ciStatus: CiOverallStatus;
+      checks: CiCheckItem[];
+      ciFailureLog?: string;
+    }>(`/api/investigations/${id}/pr/checks`, {}, token),
+  markPrReady: (id: string, body: { githubToken?: string } = {}, token?: string | null) =>
+    requestJson<{ pr: PullRequestState }>(
+      `/api/investigations/${id}/pr/checks`,
+      { method: "POST", body: JSON.stringify({ action: "mark_ready", ...body }) },
+      token
+    ),
+  repairPrCi: (
+    id: string,
+    body: {
+      approved: boolean;
+      pushToPr?: boolean;
+      maxAttempts?: number;
+      customInstruction?: string;
+      githubToken?: string;
+    },
+    token?: string | null
+  ) =>
+    requestJson<{ remediation: RemediationData; pr?: PullRequestState; pushed: boolean }>(
+      `/api/investigations/${id}/pr/repair`,
       { method: "POST", body: JSON.stringify(body) },
       token
     ),

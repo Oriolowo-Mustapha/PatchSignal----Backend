@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { memorySessionStore, memoryStore, memoryUserStore } from "@/lib/store";
-import { authUser, SESSION_COOKIE_NAME } from "@/lib/auth";
+import { authUser, hasActiveSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth";
 import { POST as signup } from "@/app/api/auth/signup/route";
 import { POST as login } from "@/app/api/auth/login/route";
 import { POST as logout } from "@/app/api/auth/logout/route";
@@ -287,5 +287,31 @@ describe("in-memory auth, cookies, session revocation & authorization matrix", (
     );
     expect(authRes).toBeInstanceOf(Response);
     expect((authRes as Response).status).toBe(503);
+  });
+
+  it("hasActiveSessionToken validates active cookies and rejects empty, invalid, or revoked tokens", async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    expect(await hasActiveSessionToken(null)).toBe(false);
+    expect(await hasActiveSessionToken("")).toBe(false);
+    expect(await hasActiveSessionToken("invalid.jwt.token")).toBe(false);
+
+    const signupRes = await signup(
+      new NextRequest("http://test/api/auth/signup", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "sessioncheck@example.com", password: "password123" }),
+      })
+    );
+    expect(signupRes.status).toBe(201);
+    const { token } = (await signupRes.json()) as { token: string };
+    expect(await hasActiveSessionToken(token)).toBe(true);
+
+    await logout(
+      new NextRequest("http://test/api/auth/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+    );
+    expect(await hasActiveSessionToken(token)).toBe(false);
   });
 });

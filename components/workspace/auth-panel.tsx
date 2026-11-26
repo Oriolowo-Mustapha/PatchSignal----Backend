@@ -16,6 +16,8 @@ import {
 import { apiClient, ApiRequestError, type UserProfile } from "@/lib/ui/api-client";
 import { useAccessibleFormValidation } from "@/lib/ui/use-accessible-form";
 import { BrandMark } from "@/components/brand-mark";
+import { AlertBanner } from "@/components/ui/alert-banner";
+import { Spinner } from "@/components/ui/loaders";
 import { PasswordInput } from "@/components/ui/password-input";
 import { PasswordStrength } from "@/components/ui/password-strength";
 import { SlidingTabs } from "@/components/ui/sliding-tabs";
@@ -95,7 +97,7 @@ export function AuthPanel({
       if (err instanceof ApiRequestError) {
         setServerError(err.message);
       } else {
-        setServerError("Unable to complete authentication right now. Please try again.");
+        setServerError("We couldn't sign you in right now. Please try again in a moment.");
       }
     } finally {
       setSubmitting(false);
@@ -108,7 +110,7 @@ export function AuthPanel({
         <div className="auth-topbar__inner">
           <div className="auth-topbar__left">
             <Link href="/" className="auth-brand-link">
-              <BrandMark size={20} pulseColor="#A3E635" />
+              <BrandMark size={20} pulseColor="#A3E635" animated />
               <span>PatchSignal</span>
             </Link>
             <span className="auth-topbar__sep" aria-hidden="true">
@@ -120,6 +122,9 @@ export function AuthPanel({
           <nav className="auth-topbar__right" aria-label="Authentication navigation">
             <Link href="/" className="auth-top-link">
               Home
+            </Link>
+            <Link href="/dashboard" className="auth-top-link">
+              Dashboard
             </Link>
             <Link href="/docs" className="auth-top-link">
               API Docs
@@ -142,7 +147,7 @@ export function AuthPanel({
       </header>
 
       <main id="main-content" className="auth-vault__stage">
-        <div className="auth-chamber-frame">
+        <div className="auth-chamber-frame ps-panel-enter">
           <span className="ps-crosshair ps-crosshair--tl" aria-hidden="true" />
           <span className="ps-crosshair ps-crosshair--tr" aria-hidden="true" />
 
@@ -192,7 +197,7 @@ export function AuthPanel({
                 </p>
               </div>
 
-              <form ref={formRef} onSubmit={handleSubmit} noValidate className="auth-form">
+              <form key={mode} ref={formRef} onSubmit={handleSubmit} noValidate className="auth-form ps-panel-enter">
                 {mode === "signup" ? (
                   <div className="ps-field">
                     <label htmlFor="auth-name">Full name</label>
@@ -237,7 +242,7 @@ export function AuthPanel({
                     />
                   </div>
                   <div id="auth-email-error" className="ps-error-msg">
-                    Enter a valid email address
+                    Please enter a valid email address.
                   </div>
                 </div>
 
@@ -255,7 +260,7 @@ export function AuthPanel({
                     minLength={8}
                     hint={mode === "signup" ? "At least 8 characters" : undefined}
                     errorId="auth-password-error"
-                    errorMessage="Password must contain at least 8 characters"
+                    errorMessage="Use at least 8 characters for your password."
                     leadingIcon={<Lock size={16} strokeWidth={1.5} />}
                   />
                   {mode === "signup" ? <PasswordStrength value={password} /> : null}
@@ -276,21 +281,34 @@ export function AuthPanel({
                     enterKeyHint="done"
                     required
                     errorId="auth-confirm-password-error"
-                    errorMessage="Re-enter your password to confirm"
-                    customError={passwordsMismatch ? "Passwords do not match" : null}
+                    errorMessage="Please re-enter your password to confirm."
+                    customError={passwordsMismatch ? "Those passwords don't match yet." : null}
                     matchMessage={passwordsMatch ? "Passwords match" : null}
                     leadingIcon={<Lock size={16} strokeWidth={1.5} />}
                   />
                 ) : null}
 
                 {serverError ? (
-                  <div className="ws-notice ws-notice--neg" role="alert">
-                    {serverError}
-                  </div>
+                  <AlertBanner
+                    variant="error"
+                    context="auth"
+                    message={serverError}
+                    onDismiss={() => setServerError(null)}
+                    compact
+                  />
                 ) : null}
 
                 <button type="submit" className="auth-submit" disabled={submitting}>
-                  <span>{submitting ? "Working…" : mode === "login" ? "Sign in" : "Create account"}</span>
+                  {submitting ? <Spinner size={15} /> : null}
+                  <span>
+                    {submitting
+                      ? mode === "login"
+                        ? "Signing in…"
+                        : "Creating account…"
+                      : mode === "login"
+                        ? "Sign in"
+                        : "Create account"}
+                  </span>
                   {submitting ? null : <ArrowRight size={16} strokeWidth={1.75} aria-hidden="true" />}
                 </button>
               </form>

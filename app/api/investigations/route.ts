@@ -14,6 +14,12 @@ function toInvestigationSummary(inv: Record<string, unknown>) {
   const cls = getLatestClassification(inv);
   const job = inv.analysisJob && typeof inv.analysisJob === "object" ? (inv.analysisJob as Record<string, unknown>) : null;
   const attachments = Array.isArray(inv.attachments) ? inv.attachments : [];
+  const rawInsp = (inv.inspectionJson ?? inv.inspection ?? null) as Record<string, unknown> | null;
+  const rem =
+    rawInsp?.remediation && typeof rawInsp.remediation === "object"
+      ? (rawInsp.remediation as Record<string, unknown>)
+      : null;
+  const pr = rem?.pr && typeof rem.pr === "object" ? (rem.pr as Record<string, unknown>) : null;
   return {
     id: String(inv.id ?? ""),
     repoUrl: String(inv.repoUrl ?? ""),
@@ -32,6 +38,16 @@ function toInvestigationSummary(inv: Record<string, unknown>) {
           status: String(job.status ?? "queued"),
           error: typeof job.error === "string" ? job.error : null,
           updatedAt: job.updatedAt instanceof Date ? job.updatedAt.toISOString() : String(job.updatedAt ?? ""),
+        }
+      : null,
+    remediation: rem
+      ? {
+          status: String(rem.status ?? "idle"),
+          ...(typeof rem.ecosystem === "string" ? { ecosystem: rem.ecosystem } : {}),
+          ...(typeof pr?.prNumber === "number" ? { prNumber: pr.prNumber } : {}),
+          ...(typeof pr?.prUrl === "string" ? { prUrl: pr.prUrl } : {}),
+          ...(typeof pr?.draft === "boolean" ? { prDraft: pr.draft } : {}),
+          ...(typeof pr?.ciStatus === "string" ? { ciStatus: pr.ciStatus } : {}),
         }
       : null,
     latestClassification: cls

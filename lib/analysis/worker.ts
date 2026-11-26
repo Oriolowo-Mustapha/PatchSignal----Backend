@@ -161,7 +161,7 @@ const registry = globalThis as typeof globalThis & {
 };
 registry.__ps_runOne = runOne;
 
-const IDLE_POLL_MS = 15_000;
+const IDLE_POLL_MS = 30_000;
 const MAX_BACKOFF_MS = 120_000;
 
 function scheduleTick(delayMs: number) {

@@ -86,8 +86,8 @@ Your task:
 1. Identify the root cause explaining the reported failure or exception.
 2. Provide minimal, clean, production-safe code changes in "patches" containing the FULL updated content for each modified or added file (preserving unrelated methods, imports, formatting, and comments).
 3. Only touch relative file paths inside the repository tree (never ".env*", never ".git/", never "..").
-4. Choose an appropriate verificationCommand for the repository ecosystem (e.g., "dotnet build --nologo" or "dotnet test --nologo", "npm test", "npx vitest run", "pytest", "go test ./..."). Include writing or updating a targeted unit test when appropriate so the verification suite proves the fix holds.
-5. If a <previous_attempt> block is provided, read its command exit code, stdout, and stderr carefully and repair every compiler error or failing assertion cleanly.
+4. Inspect any ".github/workflows/*.yml" files inside <data> blocks so "verificationCommand" matches the repository's real CI suite (prefer full test commands like "dotnet test --nologo" over "dotnet build --nologo" when test projects exist, or "npm test" / "pytest" / "go test ./..."). Whenever a behavioral fix changes what existing unit tests expect, update those tests cleanly and add or update a targeted test proving the fix holds.
+5. If a <previous_attempt> block is provided, read its command exit code, stdout, and stderr carefully (including any GitHub Actions CI failures) and repair every compiler error or failing assertion cleanly.
 
 Call propose_fix once with the complete object.`;
 
@@ -218,18 +218,58 @@ export function selectRelevantRepoFiles(
       a.filePath.length - b.filePath.length ||
       a.filePath.localeCompare(b.filePath)
   );
-  return scored.slice(0, limit).map((s) => s.filePath);
+  const selected = scored.slice(0, limit).map((s) => s.filePath);
+  const seen = new Set(selected);
+
+  // Also include CI workflow definitions so proposals align with GitHub Actions checks.
+  const workflows = files
+    .filter((p) => /^\.github\/workflows\/[^/]+\.ya?ml$/i.test(p) && !seen.has(p))
+    .slice(0, 2);
+  for (const wf of workflows) {
+    selected.push(wf);
+    seen.add(wf);
+  }
+
+  // Also include matching unit test files for any selected source file so behavior changes keep tests green.
+  const selectedStems = selected
+    .filter((p) => !/\.(test|spec)\.|Tests?\./i.test(p) && !p.startsWith(".github/"))
+    .map((p) => (p.split("/").pop() ?? "").replace(/\.[^.]+$/, "").toLowerCase())
+    .filter((stem) => stem.length >= 4);
+
+  if (selectedStems.length > 0) {
+    let addedTests = 0;
+    for (const p of files) {
+      if (addedTests >= 2 || selected.length >= limit + 3) break;
+      if (seen.has(p)) continue;
+      const low = p.toLowerCase();
+      const isTestFile = /\.(test|spec)\.|test/i.test(low);
+      if (isTestFile && selectedStems.some((stem) => low.includes(stem))) {
+        selected.push(p);
+        seen.add(p);
+        addedTests++;
+      }
+    }
+  }
+
+  return selected.slice(0, limit + 3);
 }
 
 function validateProposalPaths(
   proposal: RawPatchProposal,
-  defaultCmd: string
+  defaultCmd: string,
+  blocked: ReadonlySet<string> = new Set()
 ): { ok: true; value: RawPatchProposal } | { ok: false; error: string } {
   const fixedPatches: RawPatchProposal["patches"] = [];
   for (const p of proposal.patches) {
     const safePath = sanitizeRepoRelativePath(p.path);
     if (!safePath) {
       return { ok: false, error: `Invalid or forbidden repository file path: "${p.path}"` };
+    }
+    if (blocked.has(safePath)) {
+      return {
+        ok: false,
+        error: `"${safePath}" was only shown partially (truncated); do not rewrite it. Patch a different file or add a new one.`,
+      };
     }
     fixedPatches.push({ ...p, path: safePath });
   }
@@ -252,103 +292,157 @@ function firstGeminiArgs(res: any): unknown | null {
   return null;
 }
 
-async function callGeminiFix(promptText: string, defaultCmd: string): Promise<RawPatchProposal> {
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatNetworkError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = (err as { cause?: { code?: string; errno?: string | number; message?: string } }).cause;
+  if (!cause) return err.message;
+  const detail = [cause.code, cause.message].filter(Boolean).join(": ");
+  return detail ? `${err.message} (${detail})` : err.message;
+}
+
+function isTransientNetworkError(err: unknown): boolean {
+  const text = formatNetworkError(err);
+  return /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR|AbortError|aborted|socket hang up|network/i.test(
+    text
+  );
+}
+
+async function callGeminiFix(prompt: BuiltPrompt, defaultCmd: string): Promise<RawPatchProposal> {
+  const promptText = prompt.text;
   const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
   const models = [config.gemmaPrimary, config.gemmaFallback];
-  let lastError = "no attempts";
+  const modelErrors: string[] = [];
   let hint = "";
 
   for (const model of models) {
-    try {
-      const fullPrompt = hint
-        ? `<correction>\n${hint}\n</correction>\n\n${promptText}`
-        : promptText;
-      const res = await withDeadline(
-        (signal) =>
-          ai.models.generateContent({
-            model,
-            contents: [{ role: "user", parts: [{ text: fullPrompt }] as never }],
-            config: {
-              abortSignal: signal,
-              httpOptions: { timeout: 30_000 },
-              temperature: 0.4,
-              topP: 0.95,
-              topK: 40,
-              systemInstruction: SYSTEM_PROMPT,
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              thinkingConfig: { thinkingLevel: "minimal" } as any,
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              tools: [{ functionDeclarations: [PROPOSE_FIX_DECLARATION] }] as any,
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              toolConfig: { functionCallingConfig: { mode: "ANY" } } as any,
-            },
-          }),
-        32_000
-      );
-      const args = firstGeminiArgs(res);
-      if (!args) {
-        lastError = `${model}: empty function call`;
-        hint = "Call propose_fix once with the complete JSON object.";
-        continue;
+    for (let netAttempt = 0; netAttempt < 2; netAttempt++) {
+      try {
+        const fullPrompt = hint
+          ? `<correction>\n${hint}\n</correction>\n\n${promptText}`
+          : promptText;
+        const res = await withDeadline(
+          (signal) =>
+            ai.models.generateContent({
+              model,
+              contents: [{ role: "user", parts: [{ text: fullPrompt }] as never }],
+              config: {
+                abortSignal: signal,
+                httpOptions: { timeout: GEMINI_FIX_TIMEOUT_MS },
+                temperature: 0.4,
+                topP: 0.95,
+                topK: 40,
+                systemInstruction: SYSTEM_PROMPT,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                thinkingConfig: { thinkingLevel: "minimal" } as any,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                tools: [{ functionDeclarations: [PROPOSE_FIX_DECLARATION] }] as any,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                toolConfig: { functionCallingConfig: { mode: "ANY" } } as any,
+              },
+            }),
+          GEMINI_FIX_TIMEOUT_MS + 2_000
+        );
+        const args = firstGeminiArgs(res);
+        if (!args) {
+          modelErrors.push(`${model}: empty function call`);
+          hint = "Call propose_fix once with the complete JSON object.";
+          break;
+        }
+        const parsed = patchProposalSchema.safeParse(args);
+        if (!parsed.success) {
+          const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+          modelErrors.push(`${model}: schema validation failed (${issues})`);
+          hint = `Fix these schema errors only: ${issues}`;
+          break;
+        }
+        const checked = validateProposalPaths(parsed.data, defaultCmd, prompt.blocked);
+        if (!checked.ok) {
+          modelErrors.push(`${model}: ${checked.error}`);
+          hint = checked.error;
+          break;
+        }
+        return checked.value;
+      } catch (err) {
+        const msg = formatNetworkError(err);
+        if (netAttempt === 0 && isTransientNetworkError(err)) {
+          await sleepMs(1_000);
+          continue;
+        }
+        modelErrors.push(`${model}: ${msg}`);
+        hint = "";
+        break;
       }
-      const parsed = patchProposalSchema.safeParse(args);
-      if (!parsed.success) {
-        const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
-        lastError = `${model}: schema validation failed (${issues})`;
-        hint = `Fix these schema errors only: ${issues}`;
-        continue;
-      }
-      const checked = validateProposalPaths(parsed.data, defaultCmd);
-      if (!checked.ok) {
-        lastError = `${model}: ${checked.error}`;
-        hint = checked.error;
-        continue;
-      }
-      return checked.value;
-    } catch (err) {
-      lastError = `${model}: ${err instanceof Error ? err.message : String(err)}`;
-      hint = "";
     }
   }
-  throw new Error(`Gemini fix generation failed: ${lastError}`);
+  throw new Error(`Gemini fix generation failed: ${modelErrors.join("; ")}`);
 }
 
-async function callGroqFix(promptText: string, defaultCmd: string): Promise<RawPatchProposal> {
+async function callGroqFix(
+  buildPrompt: (budgetChars: number) => BuiltPrompt,
+  defaultCmd: string
+): Promise<RawPatchProposal> {
   if (!config.groqApiKey || !config.groqModel) {
     throw new Error("Groq fix fallback is not configured");
   }
   let hint = "";
   let lastError = "no attempts";
+  let budget = GROQ_PROMPT_CHAR_BUDGET;
 
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
+    const prompt = buildPrompt(budget);
     const content = hint
-      ? `Correction: ${hint}\n\n${promptText}`
-      : promptText;
-    const res = await withDeadline(async (signal) => {
-      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.groqApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: config.groqModel,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content },
-          ],
-          tools: [PROPOSE_FIX_OPENAI_TOOL],
-          tool_choice: "required",
-          temperature: 0.3,
-          max_completion_tokens: 4096,
-        }),
-        signal,
-      });
-      return { ok: response.ok, status: response.status, text: await response.text() };
-    }, 30_000);
+      ? `Correction: ${hint}\n\n${prompt.text}`
+      : prompt.text;
+    let res: { ok: boolean; status: number; text: string };
+    try {
+      res = await withDeadline(async (signal) => {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${config.groqApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: config.groqModel,
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              { role: "user", content },
+            ],
+            tools: [PROPOSE_FIX_OPENAI_TOOL],
+            tool_choice: "required",
+            temperature: 0.3,
+            max_completion_tokens: GROQ_MAX_COMPLETION_TOKENS,
+          }),
+          signal,
+        });
+        return { ok: response.ok, status: response.status, text: await response.text() };
+      }, 45_000);
+    } catch (err) {
+      lastError = formatNetworkError(err);
+      if (isTransientNetworkError(err) && i < 2) {
+        await sleepMs(1_200);
+        continue;
+      }
+      throw new Error(`Groq fix generation failed: ${lastError}`);
+    }
 
     if (!res.ok) {
-      lastError = `HTTP ${res.status} ${res.text.slice(0, 240)}`;
+      lastError = `HTTP ${res.status} ${summarizeProviderError(res.text)}`;
+      if (res.status === 413 || /reduce your message size|too large/i.test(res.text)) {
+        // Shrink the prompt to fit the account's tokens-per-minute limit and retry.
+        const m = res.text.match(/Limit\s+(\d+),\s*Requested\s+(\d+)/i);
+        const ratio = m ? Number(m[1]) / Number(m[2]) : 0.5;
+        const promptTokens = Math.max(Number(m?.[2] ?? 0) - GROQ_MAX_COMPLETION_TOKENS, 1);
+        const allowedPromptTokens = Number(m?.[1] ?? 0) - GROQ_MAX_COMPLETION_TOKENS - 300;
+        const tokenRatio = m && allowedPromptTokens > 0 ? allowedPromptTokens / promptTokens : ratio;
+        budget = Math.max(3_000, Math.floor(budget * Math.min(tokenRatio, 0.85)));
+        continue;
+      }
+      if (res.status === 429) break; // rate limited — retrying immediately will not help
       continue;
     }
     const body = JSON.parse(res.text) as {
@@ -373,7 +467,7 @@ async function callGroqFix(promptText: string, defaultCmd: string): Promise<RawP
       hint = `Fix these schema errors: ${issues}`;
       continue;
     }
-    const checked = validateProposalPaths(parsed.data, defaultCmd);
+    const checked = validateProposalPaths(parsed.data, defaultCmd, prompt.blocked);
     if (!checked.ok) {
       lastError = checked.error;
       hint = checked.error;
@@ -382,6 +476,49 @@ async function callGroqFix(promptText: string, defaultCmd: string): Promise<RawP
     return checked.value;
   }
   throw new Error(`Groq fix generation failed: ${lastError}`);
+}
+
+function summarizeProviderError(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { error?: { message?: string } };
+    if (parsed?.error?.message) return parsed.error.message.slice(0, 300);
+  } catch {
+    // not JSON
+  }
+  return text.slice(0, 300);
+}
+
+export type BuiltPrompt = { text: string; blocked: Set<string> };
+
+const GEMINI_FIX_TIMEOUT_MS = Number(process.env.GEMINI_FIX_TIMEOUT_MS ?? "") || 45_000;
+const GEMINI_PROMPT_CHAR_BUDGET = 150_000;
+// Groq on-demand tiers cap tokens-per-minute (8k for gpt-oss-120b). Prompt + completion must fit.
+const GROQ_PROMPT_CHAR_BUDGET = Number(process.env.GROQ_PROMPT_CHAR_BUDGET ?? "") || 11_000;
+const GROQ_MAX_COMPLETION_TOKENS = Number(process.env.GROQ_MAX_COMPLETION_TOKENS ?? "") || 3_000;
+
+function clipText(s: string, max: number): string {
+  if (max <= 0) return "";
+  if (s.length <= max) return s;
+  const head = Math.floor(max * 0.6);
+  const tail = Math.max(max - head - 20, 0);
+  return `${s.slice(0, head)}\n...[truncated]...\n${tail ? s.slice(-tail) : ""}`;
+}
+
+/** Keeps only the meaningful lines of a noisy deploy log (exceptions, stack frames, errors). */
+function condenseLog(s: string): string {
+  const lines = s
+    .replace(/\r/g, "")
+    .split(/\n|(?=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)/)
+    .map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*/, "").trim())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of lines) {
+    if (seen.has(line)) continue;
+    seen.add(line);
+    out.push(line);
+  }
+  return out.join("\n");
 }
 
 export type ProposeFixInput = {
@@ -450,57 +587,123 @@ export async function proposeFixIteration(input: ProposeFixInput): Promise<{
   }
 
   const fetchedFiles = await Promise.all(
-    targetPaths.slice(0, 6).map((filePath) =>
+    targetPaths.slice(0, 8).map((filePath) =>
       fetchRepoFileWithSha(input.owner, input.repo, filePath, input.commitSha, 35_000)
     )
   );
   const originalsMap = new Map<string, string>();
-  const sourceBlocks: string[] = [];
+  const orderedFiles: { path: string; content: string }[] = [];
   for (const file of fetchedFiles) {
     if (!file) continue;
     originalsMap.set(file.path, file.content);
-    sourceBlocks.push(`<data name="file:${file.path}">\n${file.content}\n</data>`);
+    orderedFiles.push({ path: file.path, content: file.content });
   }
 
-  const clip = (s: string, max = 5000) =>
-    s.length <= max ? s : `${s.slice(0, 2800)}\n...\n${s.slice(-1800)}`;
+  const description = condenseLog(input.description);
+  const errorText = input.errorText ? condenseLog(input.errorText) : "";
+  // Deploy logs are often pasted into both fields — avoid sending them twice.
+  const errorDuplicatesDescription =
+    !!errorText && description.includes(errorText.slice(0, Math.min(200, errorText.length)));
 
-  const promptSections = [
-    `<data name="repo">${input.owner}/${input.repo} @ ${input.commitSha}</data>`,
-    `<data name="ecosystem">${input.ecosystem} (default verify command: ${defaultCmd})</data>`,
-    `<data name="description">\n${clip(input.description, 4000)}\n</data>`,
-    `<data name="expected">${input.expected || "(unspecified)"}</data>`,
-    `<data name="actual">${input.actual || "(unspecified)"}</data>`,
-    `<data name="steps">${input.steps || "(unspecified)"}</data>`,
-    `<data name="errorText">\n${clip(input.errorText || "(none)", 4000)}\n</data>`,
-    `<data name="evidence">\n${input.evidenceItems.map((e) => `[${e.provenance}] ${e.text}`).join("\n") || "(none)"}\n</data>`,
-    `<data name="repoTree">\n${input.repoPaths.slice(0, 350).join("\n")}\n</data>`,
-    ...sourceBlocks,
-  ];
-
-  if (input.customInstruction?.trim()) {
-    promptSections.push(`<data name="maintainerHint">${input.customInstruction.trim()}</data>`);
-  }
-
-  if (input.previousIteration) {
-    promptSections.push(
-      [
-        `<previous_attempt attempt="${input.attempt - 1}">`,
-        `Command: ${input.previousIteration.command}`,
-        `Exit code: ${input.previousIteration.exitCode}`,
-        `Stdout:\n${clip(input.previousIteration.stdout, 2500)}`,
-        `Stderr:\n${clip(input.previousIteration.stderr, 2500)}`,
-        `Previous patches:\n${input.previousIteration.patches
-          .map((p) => `--- ${p.path} ---\n${clip(p.content, 3000)}`)
-          .join("\n")}`,
-        `</previous_attempt>`,
-      ].join("\n")
+  const buildPrompt = (budget: number): BuiltPrompt => {
+    const blocked = new Set<string>();
+    const fixed = [
+      `<data name="repo">${input.owner}/${input.repo} @ ${input.commitSha}</data>`,
+      `<data name="ecosystem">${input.ecosystem} (default verify command: ${defaultCmd})</data>`,
+      `<data name="expected">${clipText(input.expected || "(unspecified)", 400)}</data>`,
+      `<data name="actual">${clipText(input.actual || "(unspecified)", 400)}</data>`,
+      `<data name="steps">${clipText(input.steps || "(unspecified)", 400)}</data>`,
+      ...(input.customInstruction?.trim()
+        ? [`<data name="maintainerHint">${clipText(input.customInstruction.trim(), 600)}</data>`]
+        : []),
+    ];
+    const sections: string[] = [...fixed];
+    sections.push(
+      `<data name="description">\n${clipText(description, Math.floor(budget * (errorDuplicatesDescription ? 0.22 : 0.14)))}\n</data>`
     );
-  }
+    if (errorText && !errorDuplicatesDescription) {
+      sections.push(`<data name="errorText">\n${clipText(errorText, Math.floor(budget * 0.1))}\n</data>`);
+    }
+    const evidence = input.evidenceItems.map((e) => `[${e.provenance}] ${e.text}`).join("\n");
+    if (evidence) {
+      sections.push(`<data name="evidence">\n${clipText(evidence, Math.floor(budget * 0.08))}\n</data>`);
+    }
 
-  const promptText = promptSections.join("\n\n");
+    // Repository tree: relevant files and their sibling directories first, capped by budget.
+    const dirs = new Set(orderedFiles.map((f) => f.path.split("/").slice(0, -1).join("/")));
+    const treeOrdered = [
+      ...input.repoPaths.filter((p) => dirs.has(p.split("/").slice(0, -1).join("/"))),
+      ...input.repoPaths.filter(
+        (p) => !dirs.has(p.split("/").slice(0, -1).join("/")) && !IGNORED_PATH_RE.test(p)
+      ),
+    ];
+    const treeBudget = Math.floor(budget * 0.08);
+    const treeLines: string[] = [];
+    let treeLen = 0;
+    for (const p of treeOrdered) {
+      if (treeLen + p.length + 1 > treeBudget || treeLines.length >= 350) break;
+      treeLines.push(p);
+      treeLen += p.length + 1;
+    }
+    sections.push(`<data name="repoTree">\n${treeLines.join("\n")}\n</data>`);
+
+    if (input.previousIteration) {
+      const prevBudget = Math.floor(budget * 0.14);
+      const prev = input.previousIteration;
+      const patchNotes = prev.patches.map((p) => `- ${p.path}: ${clipText(p.explanation, 160)}`).join("\n");
+      sections.push(
+        [
+          `<previous_attempt attempt="${input.attempt - 1}">`,
+          `Command: ${prev.command}`,
+          `Exit code: ${prev.exitCode}`,
+          `Stderr:\n${clipText(prev.stderr, Math.floor(prevBudget * 0.55))}`,
+          `Stdout:\n${clipText(prev.stdout, Math.floor(prevBudget * 0.3))}`,
+          `Files changed (their attempted content is shown in the file blocks below):\n${patchNotes}`,
+          `</previous_attempt>`,
+        ].join("\n")
+      );
+    }
+
+    // Source files: previous-attempt content (if any) replaces the original so the model iterates on it.
+    const prevContent = new Map(input.previousIteration?.patches.map((p) => [p.path, p.content]) ?? []);
+    let used = sections.join("\n\n").length;
+    const filePaths = Array.from(new Set([...prevContent.keys(), ...orderedFiles.map((f) => f.path)]));
+    for (const filePath of filePaths) {
+      const content = prevContent.get(filePath) ?? originalsMap.get(filePath);
+      if (content === undefined) continue;
+      const label = prevContent.has(filePath) ? `file:${filePath} (your previous attempt)` : `file:${filePath}`;
+      const block = `<data name="${label}">\n${content}\n</data>`;
+      const remaining = budget - used;
+      if (block.length + 2 <= remaining) {
+        sections.push(block);
+        used += block.length + 2;
+      } else if (remaining > 1_500 && !sections.some((s) => s.startsWith('<data name="file:'))) {
+        // The most relevant file is too big to send whole: show an excerpt and forbid rewriting it.
+        blocked.add(filePath);
+        sections.push(
+          `<data name="file:${filePath} (TRUNCATED excerpt — do not rewrite this file)">\n${clipText(content, remaining - 200)}\n</data>`
+        );
+        used = budget;
+      }
+    }
+    return { text: sections.join("\n\n"), blocked };
+  };
+
   const hasGemini = Boolean(config.geminiApiKey);
   const hasGroq = Boolean(config.groqApiKey && config.groqModel);
+  const providerErrors: string[] = [];
+  const tryProvider = async (name: "gemini" | "groq"): Promise<RawPatchProposal | null> => {
+    try {
+      return name === "gemini"
+        ? await callGeminiFix(buildPrompt(GEMINI_PROMPT_CHAR_BUDGET), defaultCmd)
+        : await callGroqFix(buildPrompt, defaultCmd);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[remediation] ${name} fix generation failed:`, message);
+      providerErrors.push(message);
+      return null;
+    }
+  };
 
   let raw: RawPatchProposal;
   if (!hasGemini && !hasGroq) {
@@ -521,22 +724,22 @@ export async function proposeFixIteration(input: ProposeFixInput): Promise<{
         },
       ],
     };
-  } else if (config.modelProvider === "groq" && hasGroq) {
-    try {
-      raw = await callGroqFix(promptText, defaultCmd);
-    } catch (err) {
-      if (hasGemini) raw = await callGeminiFix(promptText, defaultCmd);
-      else throw err;
-    }
-  } else if (hasGemini) {
-    try {
-      raw = await callGeminiFix(promptText, defaultCmd);
-    } catch (err) {
-      if (hasGroq) raw = await callGroqFix(promptText, defaultCmd);
-      else throw err;
-    }
   } else {
-    raw = await callGroqFix(promptText, defaultCmd);
+    const order: ("gemini" | "groq")[] =
+      config.modelProvider === "groq" && hasGroq
+        ? hasGemini ? ["groq", "gemini"] : ["groq"]
+        : hasGemini
+          ? hasGroq ? ["gemini", "groq"] : ["gemini"]
+          : ["groq"];
+    let result: RawPatchProposal | null = null;
+    for (const name of order) {
+      result = await tryProvider(name);
+      if (result) break;
+    }
+    if (!result) {
+      throw new Error(`Could not generate a fix. ${providerErrors.join(" | ")}`);
+    }
+    raw = result;
   }
 
   // Ensure originalContent is populated even for files not in initial fetch list.

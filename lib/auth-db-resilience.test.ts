@@ -14,7 +14,7 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 import { authUser, SESSION_COOKIE_NAME, signToken } from "./auth";
-import { normalizeDatabaseUrl } from "./db/retry";
+import { isTransientDbError, normalizeDatabaseUrl } from "./db/retry";
 
 describe("Prisma connection pool resilience & authUser", () => {
   beforeEach(() => {
@@ -105,5 +105,12 @@ describe("Prisma connection pool resilience & authUser", () => {
       userId: "user_123",
     });
     expect(findUniqueMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("recognizes Windows Os 10054 ConnectionReset errors as transient DB failures", () => {
+    const winResetErr = new Error(
+      'Error in PostgreSQL connection: Error { kind: Io, cause: Some(Os { code: 10054, kind: ConnectionReset, message: "An existing connection was forcibly closed by the remote host." }) }'
+    );
+    expect(isTransientDbError(winResetErr)).toBe(true);
   });
 });

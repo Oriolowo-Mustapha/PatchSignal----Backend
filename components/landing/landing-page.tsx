@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { CodeBlockTabs } from "@/components/ui/code-block-tabs";
+import { ScrollReveal } from "@/components/ui/scroll-reveal";
 import {
   CommandPalette,
   CommandPaletteTrigger,
@@ -135,7 +136,8 @@ const ARTIFACT_TABS = [
   },
 ];
 
-export function LandingPage() {
+export function LandingPage({ initialAuthenticated = false }: { initialAuthenticated?: boolean }) {
+  const isAuthenticated = initialAuthenticated;
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const [paletteOpen, setPaletteOpen] = React.useState(false);
@@ -145,8 +147,16 @@ export function LandingPage() {
     if (el) el.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  const paletteItems = React.useMemo<CommandPaletteItem[]>(
-    () => [
+  const paletteItems = React.useMemo<CommandPaletteItem[]>(() => {
+    const items: CommandPaletteItem[] = [
+      {
+        id: "go-dashboard",
+        group: "Navigation",
+        label: "Operations Dashboard",
+        subtitle: "Metrics, verdict breakdown, PR CI status, and service health",
+        icon: <Compass size={16} strokeWidth={1.5} />,
+        onSelect: () => router.push("/dashboard"),
+      },
       {
         id: "go-workspace",
         group: "Workspace",
@@ -156,20 +166,24 @@ export function LandingPage() {
         badge: "App",
         onSelect: () => router.push("/workspace"),
       },
-      {
-        id: "go-login",
-        group: "Workspace",
-        label: "Sign in to existing account",
-        icon: <LogIn size={16} strokeWidth={1.5} />,
-        onSelect: () => router.push("/login"),
-      },
-      {
-        id: "go-signup",
-        group: "Workspace",
-        label: "Create a new workspace account",
-        icon: <UserPlus size={16} strokeWidth={1.5} />,
-        onSelect: () => router.push("/signup"),
-      },
+      ...(!isAuthenticated
+        ? [
+            {
+              id: "go-login",
+              group: "Workspace",
+              label: "Sign in to existing account",
+              icon: <LogIn size={16} strokeWidth={1.5} />,
+              onSelect: () => router.push("/login"),
+            },
+            {
+              id: "go-signup",
+              group: "Workspace",
+              label: "Create a new workspace account",
+              icon: <UserPlus size={16} strokeWidth={1.5} />,
+              onSelect: () => router.push("/signup"),
+            },
+          ]
+        : []),
       {
         id: "sec-pipeline",
         group: "Sections",
@@ -202,16 +216,16 @@ export function LandingPage() {
         icon: <BookOpen size={16} strokeWidth={1.5} />,
         onSelect: () => router.push("/docs"),
       },
-    ],
-    [router, jumpTo]
-  );
+    ];
+    return items;
+  }, [router, jumpTo, isAuthenticated]);
 
   return (
     <div id="top" className="ps-landing">
       <header className="ps-nav">
         <div className="ps-nav__inner">
           <Link href="/" className="ps-nav__brand">
-            <BrandMark size={22} pulseColor="#A3E635" />
+            <BrandMark size={22} pulseColor="#A3E635" animated />
             <span>PatchSignal</span>
           </Link>
 
@@ -225,6 +239,10 @@ export function LandingPage() {
             <a href="#standards" className="ps-nav__link">
               Standards
             </a>
+            <span className="ps-nav__divider" aria-hidden="true" />
+            <Link href={isAuthenticated ? "/workspace" : "/dashboard"} className="ps-nav__link">
+              {isAuthenticated ? "Workspace" : "Dashboard"}
+            </Link>
             <Link href="/docs" className="ps-nav__link">
               API Docs
             </Link>
@@ -235,13 +253,15 @@ export function LandingPage() {
               className="ps-nav__cmd"
               onClick={() => setPaletteOpen(true)}
             >
-              Jump to…
+              Search
             </CommandPaletteTrigger>
-            <Link href="/login" className="ps-nav__signin">
-              Sign in
-            </Link>
-            <Link href="/workspace" className="ps-nav__action">
-              <span>Open workspace</span>
+            {!isAuthenticated ? (
+              <Link href="/login" className="ps-nav__signin">
+                Sign in
+              </Link>
+            ) : null}
+            <Link href={isAuthenticated ? "/dashboard" : "/workspace"} className="ps-nav__action">
+              <span>{isAuthenticated ? "Dashboard" : "Open workspace"}</span>
               <ArrowRight size={14} strokeWidth={1.75} aria-hidden="true" />
             </Link>
           </div>
@@ -273,14 +293,27 @@ export function LandingPage() {
             <a href="#standards" className="ps-mobile-nav__link" onClick={() => setMobileMenuOpen(false)}>
               Standards
             </a>
+            <Link
+              href={isAuthenticated ? "/workspace" : "/dashboard"}
+              className="ps-mobile-nav__link"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              {isAuthenticated ? "Workspace" : "Dashboard"}
+            </Link>
             <Link href="/docs" className="ps-mobile-nav__link" onClick={() => setMobileMenuOpen(false)}>
               API Docs
             </Link>
-            <Link href="/login" className="ps-mobile-nav__link" onClick={() => setMobileMenuOpen(false)}>
-              Sign in
-            </Link>
-            <Link href="/workspace" className="ps-mobile-nav__cta" onClick={() => setMobileMenuOpen(false)}>
-              Open workspace
+            {!isAuthenticated ? (
+              <Link href="/login" className="ps-mobile-nav__link" onClick={() => setMobileMenuOpen(false)}>
+                Sign in
+              </Link>
+            ) : null}
+            <Link
+              href={isAuthenticated ? "/dashboard" : "/workspace"}
+              className="ps-mobile-nav__cta"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              {isAuthenticated ? "Dashboard" : "Open workspace"}
             </Link>
           </nav>
         ) : null}
@@ -306,8 +339,8 @@ export function LandingPage() {
                 </p>
 
                 <div className="ps-hero__actions">
-                  <Link href="/workspace" className="ps-btn-lime">
-                    <span>Open workspace</span>
+                  <Link href={isAuthenticated ? "/dashboard" : "/workspace"} className="ps-btn-lime">
+                    <span>{isAuthenticated ? "Dashboard" : "Open workspace"}</span>
                     <ArrowRight size={16} strokeWidth={1.75} aria-hidden="true" />
                   </Link>
                   <a href="#verdicts" className="ps-btn-secondary">
@@ -341,14 +374,17 @@ export function LandingPage() {
         {/* Stage 2: Architecture Bento Grid + Orthogonal Signal Diagram */}
         <section id="pipeline" className="ps-section ps-section--surface">
           <div className="ps-frame ps-section__frame">
-            <div className="ps-section__head">
-              <h2 className="ps-heading-lg">From bug report to verifiable execution</h2>
-              <p className="ps-section__lead">
-                Every stage keeps reporter notes, screenshot facts, test assertions, and commit logs distinctly tagged so maintainers review hard evidence.
-              </p>
-            </div>
+            <ScrollReveal>
+              <div className="ps-section__head">
+                <h2 className="ps-heading-lg">From bug report to verifiable execution</h2>
+                <p className="ps-section__lead">
+                  Every stage keeps reporter notes, screenshot facts, test assertions, and commit logs distinctly tagged so maintainers review hard evidence.
+                </p>
+              </div>
+            </ScrollReveal>
 
-            <div className="ps-bento">
+            <ScrollReveal delayMs={70}>
+              <div className="ps-bento">
               <div className="ps-bento__diagram">
                 <PipelineDiagram />
               </div>
@@ -403,37 +439,45 @@ export function LandingPage() {
                 </div>
               </article>
             </div>
+            </ScrollReveal>
           </div>
         </section>
 
         {/* Stage 3: Interactive Verdict Simulator on Midnight Black */}
         <section id="verdicts" className="ps-section ps-section--canvas">
           <div className="ps-frame ps-section__frame">
-            <div className="ps-showcase-top">
-              <h2>Guesswork against proof</h2>
-              <p>
-                An explanation remains a theory until a minimal assertion fails on the broken commit and passes on the baseline revision.
-              </p>
-            </div>
+            <ScrollReveal>
+              <div className="ps-showcase-top">
+                <h2>Guesswork against proof</h2>
+                <p>
+                  An explanation remains a theory until a minimal assertion fails on the broken commit and passes on the baseline revision.
+                </p>
+              </div>
+            </ScrollReveal>
 
-            <VerdictSimulator />
+            <ScrollReveal delayMs={70}>
+              <VerdictSimulator />
+            </ScrollReveal>
           </div>
         </section>
 
         {/* Stage 4: Pure White High-Contrast Standards Matrix & Output Brief */}
         <section id="standards" className="ps-section ps-section--white">
           <div className="ps-frame ps-frame--light ps-section__frame">
-            <div className="ps-rules-header">
-              <h2 className="ps-rules-heading">
-                Clear verdicts,
-                <span className="ps-rules-heading__indent">never guesswork</span>
-              </h2>
-              <p className="ps-rules-lead">
-                Six mechanical rules govern how PatchSignal handles incomplete reports, missing modules, and final maintainer sign-off.
-              </p>
-            </div>
+            <ScrollReveal>
+              <div className="ps-rules-header">
+                <h2 className="ps-rules-heading">
+                  Clear verdicts,
+                  <span className="ps-rules-heading__indent">never guesswork</span>
+                </h2>
+                <p className="ps-rules-lead">
+                  Six mechanical rules govern how PatchSignal handles incomplete reports, missing modules, and final maintainer sign-off.
+                </p>
+              </div>
+            </ScrollReveal>
 
-            <div className="ps-rules-table-wrap">
+            <ScrollReveal delayMs={70}>
+              <div className="ps-rules-table-wrap">
               <table className="ps-rules-table">
                 <caption className="visually-hidden">PatchSignal verification and safety standards</caption>
                 <thead>
@@ -471,8 +515,10 @@ export function LandingPage() {
                 </tbody>
               </table>
             </div>
+            </ScrollReveal>
 
-            <div className="ps-proof-pair">
+            <ScrollReveal delayMs={100}>
+              <div className="ps-proof-pair">
               <div data-ui="package-preview" className="ps-package-preview">
                 <div className="ps-package-preview__head">
                   <strong className="ps-package-preview__title">Review-ready evidence brief</strong>
@@ -505,26 +551,31 @@ export function LandingPage() {
                 />
               </div>
             </div>
+            </ScrollReveal>
           </div>
         </section>
 
         {/* Stage 5: Unified Solid Lime Action Close docked above Deep Midnight Footer */}
         <section className="ps-close-band" aria-label="Workspace launch">
           <div className="ps-frame">
-            <Link href="/workspace" className="ps-cta-band">
-              <div className="ps-cta-band__top">
-                <p className="ps-cta-band__note">
-                  Submit a public GitHub repository and screenshots to produce a verified bug reproduction brief.
-                </p>
-                <span className="ps-cta-band__arrow">
-                  <ArrowUpRight size={32} strokeWidth={1.5} aria-hidden="true" />
-                </span>
-              </div>
-              <div className="ps-cta-band__bottom">
-                <span className="ps-cta-band__verb">Verify</span>
-                <span className="ps-cta-band__meta">Open workspace</span>
-              </div>
-            </Link>
+            <ScrollReveal>
+              <Link href={isAuthenticated ? "/dashboard" : "/workspace"} className="ps-cta-band">
+                <div className="ps-cta-band__top">
+                  <p className="ps-cta-band__note">
+                    Submit a public GitHub repository and screenshots to produce a verified bug reproduction brief.
+                  </p>
+                  <span className="ps-cta-band__arrow">
+                    <ArrowUpRight size={32} strokeWidth={1.5} aria-hidden="true" />
+                  </span>
+                </div>
+                <div className="ps-cta-band__bottom">
+                  <span className="ps-cta-band__verb">Verify</span>
+                  <span className="ps-cta-band__meta">
+                    {isAuthenticated ? "Go to dashboard" : "Open workspace"}
+                  </span>
+                </div>
+              </Link>
+            </ScrollReveal>
           </div>
         </section>
       </main>
@@ -551,9 +602,10 @@ export function LandingPage() {
 
             <div className="ps-footer__col">
               <div className="ps-footer__col-title">Workspace</div>
+              <Link href="/dashboard">Dashboard</Link>
               <Link href="/workspace">Open workspace</Link>
-              <Link href="/login">Sign in</Link>
-              <Link href="/signup">Create account</Link>
+              {!isAuthenticated ? <Link href="/login">Sign in</Link> : null}
+              {!isAuthenticated ? <Link href="/signup">Create account</Link> : null}
             </div>
 
             <div className="ps-footer__col">
